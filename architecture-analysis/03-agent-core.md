@@ -84,36 +84,39 @@ user message
 
 ## 3. `AgentSession` 与 `AgentHarness`
 
-`AgentSession` 是正式 coding-agent CLI/SDK 使用的产品运行时。`AgentHarness` 是 agent-core 中尚未完成的 durable runtime 外壳；其设计希望组合以下通用能力：
+`AgentSession` 是正式 coding-agent CLI/SDK 使用的产品运行时。`AgentHarness` 是 agent-core 中已经可执行的 durable runtime；它组合以下通用能力：
 
 - `ExecutionEnv`：文件系统、shell、路径和临时文件端口。
-- `Session`：追加消息、operation 和 usage。
+- `Session`：原子提交 entry、typed value/list 和 usage。
 - compaction/branch summarization。
 - prompt templates、skills 和 system prompt 构建。
 - typed telemetry。
-- 工具集合和事件 reducer。
+- 工具集合、hook、事件与 lane snapshot reducer。
 
-其中 durable session、compaction、工具、类型和部分配置访问已经实现并可独立测试；完整 run 调度尚未实现。当前 `prompt`、`skill`、`compact`、`navigateTree`、`resume`、队列、lane 和 watch 等公开操作都会返回 `HarnessNotImplemented`，已有 operation record 的恢复创建也未实现。
+`AgentHarness` 管理会话级资源和 lane 集合；`AgentLane` 是实际操作边界。每条 lane 绑定同名 branch，并持久化模型、thinking、active tools、当前 operation 和 inbox。`prompt()`、`skill()`、`compact()`、`navigateTree()`、`resume()`、`abort()`、steer/follow-up/next-run 队列、`watch()` 与分支/整树 fork 均已有实现和测试。当前唯一公开 stub 是 session 级 `watchSession()`；JSONL 物理压缩、search 和未来格式迁移也仍是明确的后续切片。
 
-仓库里只有一个 `AgentHarness` 类。当前正式 CLI/SDK 由 `AgentSession` 直接持有 `Agent`，使用自己的 `SessionManager`、扩展系统和 compaction/branch summarization。不能把未完成的 Harness 画进正式请求路径：
+正式 CLI/SDK 仍由 `AgentSession` 直接持有 `Agent`，使用自己的 `SessionManager`、extension 系统和产品 compaction。Harness 不在这条默认请求路径，但已进入 coding-agent 的实验性远程路径：
 
 ```text
 正式 CLI/SDK：AgentSession → Agent / agent-loop
                          → SessionManager JSONL
 
-Harness 工程：AgentHarness 外壳（run 调度未完成）
-             → 已实现的 durable Session API
-             → JSONL / 内存 / SQLite backend
-             → 已实现的 compaction / tools 等基础模块
+实验路径：client → server → session worker
+                         → AgentHarness / AgentLane
+                         → durable Session（JSONL）
+                         → ModelRuntime / ExecutionEnv
 ```
 
-英文 `packages/agent/docs/harness.md` 是目标实现规格，不是当前完成度清单。正式产品是否使用某个运行时，应从 CLI/SDK 入口的实际调用链判断；当前正式入口只创建 `AgentSession`。
+Harness 不把 agent-loop 的内存消息数组当成唯一事实。一次操作先由 `accept()` 原子写入 intent、operation state 和 lane state，再由 lane-owned `Drive` 推进。每次 provider/tool 等外部效果都有前置状态和后置 checkpoint；terminal transaction 先使 lane idle，再单独写 immutable result record。`resume()` 读取持久状态继续，`watch()` 以完整 lane snapshot 开场，再发布带边界标记的增量事件。
+
+这仍不是 exactly-once。provider 可能已计费但响应尚未确认；不可安全重放的工具也可能已产生效果。Harness 的保证是把不确定窗口显式记录，并根据 retry/replay 规则恢复，而不是重复所有副作用。
 
 ### 3.1 具体实现
 
 1. 先看 `agent-session.ts` 的构造函数，确认正式产品怎样直接组合 `Agent`。
-2. 读 [`agent-harness.ts`](../packages/agent/src/harness/agent-harness.ts)，列出 Harness 已接入与未接入的操作。
-3. 最后读目标规格 [`harness.md`](../packages/agent/docs/harness.md)，理解未来方向而不是推断当前调用链。
+2. 读 [`agent-harness.ts`](../packages/agent/src/harness/agent-harness.ts)，确认公开 `AgentHarness`/`AgentLane` 契约。
+3. 读 [`runtime/harness.ts`](../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../packages/agent/src/harness/runtime/lane.ts)，确认 lane 获取、operation admission、drive、恢复和 watch。
+4. 最后读规范 [`harness.md`](../packages/agent/docs/harness.md)，其中 0.9 节明确列出尚未实现的切片。
 
 ## 4. System prompt 与能力必须同步
 
@@ -158,7 +161,7 @@ system prompt 是每次模型请求最前面的行为说明。Pi 不把它视为
 
 AbortSignal 从 run 传到 provider 和工具。模型中止会生成 `aborted` assistant message，而不是让历史出现没有终态的流式消息。工具失败转换为 `toolResult` error，使模型有机会解释或恢复；基础设施级错误才终止 run。
 
-重试分布在不同层，不能统一称为“Agent retry”：`pi-ai` 提供单次 assistant 调用的通用 retry helper，具体 provider 也可能处理传输级重试；未完成的 `AgentHarness` 外壳目前只保存 `RetryPolicy` 配置，尚未执行重试；正式 coding-agent 的 `AgentSession` 会根据完整 assistant error、产品设置和 UI 生命周期安排下一次 turn。默认策略避免在额度耗尽等非瞬时错误上长期隐藏真实状态。
+重试分布在不同层，不能统一称为“Agent retry”：`pi-ai` 提供 provider 请求的通用 retry helper，具体 provider 也可能处理传输级重试；`AgentHarness` 将 assistant/summary attempt 与 durable retry wait 写入 operation state，重启后仍遵守同一 budget；正式 coding-agent 的 `AgentSession` 则根据完整 assistant error、产品设置和 UI 生命周期安排下一次 turn。默认策略避免在额度耗尽等非瞬时错误上长期隐藏真实状态。
 
 ## 7. Reducer 与不变量
 
@@ -168,6 +171,6 @@ AbortSignal 从 run 传到 provider 和工具。模型中止会生成 `aborted` 
 - `pendingToolCalls` 由 start/end 成对维护。
 - completed message 只在 `message_end` 追加。
 - streaming message 在 `message_start/update` 更新，在 end 清除。
-- idle 必须晚于所有 awaited listener。
+- idle 必须晚于 `Agent` 内部所有 awaited listener；`AgentSession` 对宿主发布的公开 listener 是同步通知。
 
 这种设计使 UI 可以只订阅事件而无需猜测内部阶段，也使 session 持久化能与 Agent 状态保持相同顺序。

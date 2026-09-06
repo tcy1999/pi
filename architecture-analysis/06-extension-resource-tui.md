@@ -4,7 +4,7 @@ extension（扩展）是在 Pi 进程内执行的受信任 TypeScript/JavaScript
 
 ## 1. 资源系统
 
-`DefaultResourceLoader` 汇总五类资源：extensions、skills、prompt templates、themes 和 context files。resource 在这里指可被 Pi 发现和加载的扩展代码、Markdown 指令或主题文件。来源包括全局目录、项目 `.pi`/`.agents`、CLI 显式路径、npm/git/local packages 和内建扩展。
+`DefaultResourceLoader` 汇总 extensions、skills、prompt templates、themes 和 context files 五类集合，另外加载 system prompt 与 append-system-prompt 来源。resource 在这里指可被 Pi 发现和加载的扩展代码、Markdown 指令或主题文件。来源包括全局目录、项目 `.pi`/`.agents`、CLI 显式路径、npm/git/local packages 和内建扩展。
 
 资源加载不是简单 glob：它还处理设置覆盖、package manifest、过滤规则、冲突诊断、来源元数据和 reload。显式 `ResourceLoader` 接口允许 SDK 完全替换默认发现逻辑。
 
@@ -27,7 +27,7 @@ Skill 是带元数据的 Markdown 能力包，按需注入模型上下文；prom
 
 项目目录可包含设置、扩展和 package，自动加载会执行不可信代码。Interactive 模式在首次遇到相关项目资源时请求信任；非交互模式按 global `defaultProjectTrust` 或 CLI override 决定。未信任前只加载 context files、全局扩展和 CLI 扩展。
 
-但项目信任不是沙箱。Pi 默认拥有启动用户的文件、进程、网络和凭据权限。真正隔离需要 Docker、OpenShell 或 Gondolin 等外部沙箱。架构上这是明确选择：核心通过 `ExecutionEnv` 支持替换执行环境，但产品不伪装成进程内权限系统。
+但项目信任不是沙箱。Pi 默认拥有启动用户的文件、进程、网络和凭据权限。真正隔离需要 Docker、OpenShell 或 Gondolin 等外部沙箱。durable Harness 可通过 `ExecutionEnv` 替换文件和进程执行环境；正式 `AgentSession` 路径的 coding tools 仍在宿主进程中运行。两条路径都不应被理解为进程内权限系统。
 
 ### 4.1 具体实现
 
@@ -43,10 +43,10 @@ Skill 是带元数据的 Markdown 能力包，按需注入模型上下文；prom
 - `Component.render(width): string[]` 是最小渲染协议。
 - `Container` 组合组件。
 - `TuiBase` 管理终端、输入、焦点、overlay 和 16ms 渲染节流。
-- regular screen 做增量行更新；fullscreen/viewport 维护可滚动布局。
+- `TuiMainScreen` 做主屏增量行更新；`TuiAltScreen` 管理 fullscreen viewport、选择和搜索。
 - editor、markdown、select list、image 等是复用组件。
 
-`coding-agent/modes/interactive` 才把 AgentSessionEvent 转成消息组件、工具组件、footer 和命令 UI。这个边界使 TUI 可独立用于其他终端应用。
+`coding-agent/modes/interactive` 才把 AgentSessionEvent 转成消息组件、工具组件、footer 和命令 UI。`tui-renderer.ts` 集中创建 regular/fullscreen renderer，`chat-viewport.ts` 组合 scrollable transcript 与固定 input dock；实验性 client TUI 也复用这两个产品 composition helper。这个边界使 `pi-tui` 可独立用于其他终端应用。
 
 ## 6. 差量渲染
 
@@ -62,7 +62,8 @@ overlay 有视觉层级、捕获/非捕获模式、隐藏状态和 pre-focus 链
 
 1. 读 [`tui.ts`](../packages/tui/src/tui.ts) 的 `requestRender()` 与 render pass，确认失效请求怎样合并成一次终端更新。
 2. 继续读同一文件的 focus 与 overlay 方法，确认视觉层级和输入归属怎样联动。
-3. 最后看 `interactive-mode.ts` 的 `handleEvent()`，确认 Agent 事件怎样变成组件状态。
+3. 读 [`tui-renderer.ts`](../packages/coding-agent/src/modes/interactive/tui-renderer.ts) 与 [`chat-viewport.ts`](../packages/coding-agent/src/modes/interactive/chat-viewport.ts)，确认产品如何配置 renderer 与 fullscreen 布局。
+4. 最后看 `interactive-mode.ts` 的 `handleEvent()`，确认 Agent 事件怎样变成组件状态。
 
 ## 8. Extension 体现的产品设计取舍
 

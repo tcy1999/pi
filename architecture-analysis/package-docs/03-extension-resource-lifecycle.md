@@ -47,7 +47,7 @@ before 事件，可取消
 
 ## 4. 资源系统的边界
 
-`DefaultResourceLoader` 汇总 extensions、skills、prompt templates、themes 和 context files。来源可能是全局目录、项目目录、CLI 路径或 package。package manager 负责来源解析和安装，resource loader 负责把允许的路径变成带来源信息的资源，并报告冲突与诊断。
+`DefaultResourceLoader` 汇总 extensions、skills、prompt templates、themes 和 context files，并加载 system prompt 与 append-system-prompt 来源。来源可能是全局目录、项目目录、CLI 路径或 package。package manager 负责来源解析和安装，resource loader 负责把允许的路径变成带来源信息的资源，并报告冲突与诊断。
 
 Skills 与 prompt templates 是模型输入资源；extensions 是在宿主进程执行的代码；themes 是表现资源。它们都能被 package 分发，但信任级别不同，不能因为目录结构相似就视为同一种扩展机制。
 

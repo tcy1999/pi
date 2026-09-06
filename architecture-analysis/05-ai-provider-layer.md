@@ -11,6 +11,8 @@ provider（模型供应商适配）是描述一组模型、认证方式、模型
 - `Context`：system prompt、统一 messages 和 tools。
 - `AssistantMessageEvent`：start、text/thinking/tool-call delta、done/error。
 - `ProviderStreams`：`stream`、简化的 `streamSimple`，以及可选 deferred fetch/cancel。
+- `AssistantMessageFrame`：可独立持久化和归约的流式帧，供 durable Harness 在重启后恢复部分 assistant 输出。
+- `ImageProvider`/`ImageModel`：独立于对话模型的图片生成目录和请求接口。
 
 调用方通常使用 `Models.streamSimple()`；它负责鉴权、默认参数和 thinking level 映射。需要供应商高级能力时仍可用 typed API-specific options，避免最低公分母接口。
 
@@ -31,12 +33,15 @@ provider（模型供应商适配）是描述一组模型、认证方式、模型
 
 `AssistantMessageEventStream` 同时是 async iterable 和 final-result promise。事件消费者获得低延迟更新，业务代码又能 `await stream.result()` 获取最终消息。
 
+统一 stream event 适合同进程观察，但不适合直接充当 durable log：事件中的 partial message 会重复大量前缀，重启也需要严格验证顺序。`AssistantMessageFrameEncoder` 将其转为 start、内容增量、usage、done/error 等紧凑帧；`reduceAssistantMessageFrames()` 可从已提交帧重建 pending 或 settled assistant message。Harness 为每次 provider attempt 使用独立 frame list，完成后再把最终 message 放入 entry 树。
+
 ### 3.1 具体实现
 
 1. 读 [`types.ts`](../packages/ai/src/types.ts) 的 `Model`、`Context` 与 `AssistantMessageEvent`，确认统一层承诺的数据形状。
 2. 读 [`models.ts`](../packages/ai/src/models.ts) 的 `Models.streamSimple()`，确认模型选择、认证和公共 options 怎样进入请求。
 3. 读 [`anthropic.ts`](../packages/ai/src/providers/anthropic.ts)，确认 provider 怎样组合模型目录、认证和 API implementation。
 4. 读 [`anthropic-messages.ts`](../packages/ai/src/api/anthropic-messages.ts)，确认统一消息怎样变成网络 payload，原生流又怎样变回统一事件。
+5. 读 [`assistant-message-frame.ts`](../packages/ai/src/utils/assistant-message-frame.ts)，确认 transient stream 如何变成 durable frame 并被归约。
 
 ## 4. 延迟加载
 

@@ -9,15 +9,15 @@ flowchart LR
   GLOBAL["全局 settings"] --> SETTINGS["SettingsManager\n合并设置与 trust gate"]
   PROJECT["项目 settings"] --> SETTINGS
   SETTINGS --> PACKAGES["PackageManager\n解析 npm / git / local 来源"]
+  AUTO["全局与项目约定目录"] --> PACKAGES
   PACKAGES --> PATHS["带 scope/source 的资源路径"]
-  CLI["CLI / SDK 显式资源"] --> LOADER["DefaultResourceLoader"]
+  CLI["CLI / SDK 显式资源"] --> LOADER["DefaultResourceLoader\n加载与发布资源"]
   PATHS --> LOADER
-  AUTO["全局与项目约定目录"] --> LOADER
   CONTEXT["AGENTS.md / SYSTEM.md"] --> LOADER
   LOADER --> RESOURCES["extensions / skills / prompts / themes / context"]
 ```
 
-`SettingsManager` 决定当前有效设置；`PackageManager` 把设置中的 package source 解析为本地资源路径；`DefaultResourceLoader` 汇总 package 路径、约定目录和 CLI/SDK 显式输入，再把不同资源交给对应 loader。package 不是第五种运行时扩展，它只是 extensions、skills、prompts 和 themes 的分发容器。
+`SettingsManager` 决定当前有效设置；`PackageManager` 同时解析设置中的 package source 和全局/项目约定目录，产生带来源与启用状态的路径；`DefaultResourceLoader` 再合并这些路径与 CLI/SDK 显式输入，并加载具体内容。package 不是第五种运行时扩展，它只是 extensions、skills、prompts 和 themes 的分发容器。
 
 ## 2. 全局与项目设置先经过信任边界
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `AGENTS.md`、`CLAUDE.md`、skills 和 prompt templates 最终影响模型输入；extension 则直接在 Node 进程执行。它们都由 ResourceLoader 汇总，但加载方式和风险不同。项目尚未信任时可以读取 context file 作为指令来源，同时禁止项目 extension 和项目 package 代码参与 trust 决策，避免待审批代码批准自身。
 
-context file 按全局、祖先目录到当前目录的顺序叠加；同一目录的 `AGENTS.override.md` 替代该目录的普通候选。SYSTEM/APPEND_SYSTEM、skills 和 prompts 随后在 system prompt 构建阶段进入模型上下文。它们不是 SettingsManager 的字段合并结果。
+context file 按全局、祖先目录到当前目录的顺序叠加；同一目录的 `AGENTS.override.md` 替代该目录的普通候选。SYSTEM/APPEND_SYSTEM、context files 和 skills 参与基础 system prompt 构建；prompt template 不进入 system prompt，只在用户显式输入对应斜杠命令时展开到 user message。它们不是 SettingsManager 的字段合并结果。
 
 ## 6. reload 为什么要重新走解析链
 

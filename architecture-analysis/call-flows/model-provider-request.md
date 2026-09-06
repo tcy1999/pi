@@ -13,23 +13,32 @@
 ```mermaid
 sequenceDiagram
   participant AGENT_LOOP as agent-core streamAssistantResponse
-  participant AGENT as Agent streamFn
+  participant STREAM as coding-agent streamFn
   participant MR as coding-agent ModelRuntime
-  participant AUTH as pi-ai auth resolution
   participant P as pi-ai Provider
   participant API as API implementation
+  participant VENDOR as Vendor endpoint
 
-  AGENT_LOOP->>AGENT: streamFn(model, context, options)
-  AGENT->>MR: streamSimple(model, context, retry/timeout/header hooks)
-  MR->>MR: lazyStream + prepareRequest()
-  MR->>AUTH: getAuth(model, overrides)
-  AUTH-->>MR: apiKey/baseUrl/headers/env
-  MR->>AGENT: transformHeaders(before_provider_headers)
+  AGENT_LOOP->>STREAM: streamFn(model, context, options)
+  STREAM->>MR: streamSimple(model, context, retry/timeout/header hooks)
+  MR->>MR: lazyStream + 解析 auth/baseUrl/headers/env
+  MR->>STREAM: transformHeaders callback
+  STREAM-->>MR: attribution + extension headers
   MR->>P: provider.streamSimple(resolved model, context, options)
-  P->>API: 厂商协议请求
+  P->>API: stream(resolved model, context, options)
+  API->>STREAM: onPayload(payload)
+  STREAM-->>API: transformed payload
+  API->>VENDOR: HTTP / WebSocket 请求
+  VENDOR-->>API: 响应头与流式数据
+  API->>STREAM: onResponse(response)
+  STREAM-->>API: callback completion
   API-->>P: 统一 AssistantMessageEvent stream
-  P-->>AGENT_LOOP: start/delta/done/error
+  P-->>MR: AssistantMessageEvent stream
+  MR-->>STREAM: AssistantMessageEvent stream
+  STREAM-->>AGENT_LOOP: start/delta/done/error
 ```
+
+`streamFn` 提供给 `ModelRuntime` 的回调内部才会调用 `ExtensionRunner`：`transformHeaders` 对应 `before_provider_headers`，`onPayload` 对应 `before_provider_request`，`onResponse` 对应 `after_provider_response`。图中保留回调边界，不把扩展 runner 误画成 `ModelRuntime` 或 API implementation 的直接依赖。
 
 ## 3. coding-agent 注入的请求策略
 

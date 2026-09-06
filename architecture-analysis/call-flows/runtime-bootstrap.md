@@ -9,7 +9,7 @@
 ```mermaid
 sequenceDiagram
   participant MAIN as main.ts
-  participant SM as SessionManager
+  participant SM as createSessionManager()
   participant F as createRuntime factory
   participant SVC as createAgentSessionServices
   participant RES as ResourceLoader
@@ -19,10 +19,13 @@ sequenceDiagram
 
   MAIN->>SM: createSessionManager(parsed, startup cwd)
   SM-->>MAIN: 目标 session 与 effective cwd
-  MAIN->>F: createAgentSessionRuntime(factory, target)
+  MAIN->>RT: createAgentSessionRuntime(factory, target)
+  RT->>F: factory(cwd, sessionManager, start event)
   F->>SVC: cwd、agentDir、trust、资源选项
   SVC->>RES: reload()
-  RES-->>SVC: extensions、skills、prompts、themes、context
+  RES-->>SVC: reload 完成
+  SVC->>RES: getExtensions()
+  RES-->>SVC: extensions + pending provider registrations
   SVC->>MODEL: 注册 extension providers
   SVC->>MODEL: refresh({ allowNetwork: false })
   SVC-->>F: AgentSessionServices
@@ -89,4 +92,3 @@ services 创建不直接打印或退出。extension provider 注册错误、未�
 2. [`agent-session-services.ts`](../../packages/coding-agent/src/core/agent-session-services.ts)：services 创建以及 `createAgentSessionFromServices()`。
 3. [`sdk.ts`](../../packages/coding-agent/src/core/sdk.ts)：最终 `Agent`、`AgentSession` 和默认依赖的装配。
 4. [`agent-session-runtime.ts`](../../packages/coding-agent/src/core/agent-session-runtime.ts)：保存 factory，并在后续替换时复用。
-5. [`2753-reload-stale-resource-settings.test.ts`](../../packages/coding-agent/test/suite/regressions/2753-reload-stale-resource-settings.test.ts)：共享 settings/resource 实例所防止的 stale settings 回归。

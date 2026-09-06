@@ -2,16 +2,17 @@
 
 ## 1. 启动阶段
 
-`packages/coding-agent/src/cli.ts` 是极薄入口：设置进程标识、预配置 HTTP dispatcher，然后调用 `main(argv)`。`main.ts` 是应用级组装入口，也就是创建主要对象并把它们连接起来的位置：
+`packages/coding-agent/src/cli.ts` 是极薄入口：设置进程标识、预配置 HTTP dispatcher，然后调用 `main(argv)`。`main.ts` 是 CLI 的应用编排入口。它先分流一次性命令，再确定目标 session 及其工作目录；随后定义可按 cwd 重建的运行时工厂，组装设置、模型、资源和 `AgentSession`，最后交给具体 mode：
 
-1. 解析 CLI、stdin 和文件参数。
-2. 解析运行模式：`interactive`、`print`、`json` 或 `rpc`。
-3. 处理无需完整运行时的 help、auth、list-models、config/package 命令。
-4. 建立项目信任上下文，加载 global/project settings。
-5. 创建 `ModelRuntime`、`ResourceLoader` 和 `SessionManager`。
-6. 解析模型、thinking level、工具白名单和 session 恢复策略。
-7. 通过 `createAgentSessionServices()` 与 `createAgentSessionFromServices()` 创建 `AgentSession`。
-8. 包装为 `AgentSessionRuntime`，交给具体 mode。
+1. 应用 offline 等进程级选项，并提前处理 auth、package 和 config 命令。
+2. 解析通用 CLI 参数，处理 version、export 等一次性操作，并确定 `interactive`、`print`、`json` 或 `rpc` mode。
+3. 运行迁移并加载启动设置，选择或创建 session，由此确定最终运行 cwd。
+4. 解析项目信任，并定义按 cwd 创建运行时的工厂：加载 settings、模型目录、扩展和其他资源，解析模型、thinking level 与工具选项，再创建 `AgentSession`。
+5. 用 `AgentSessionRuntime` 包装 session，使 new、resume、fork 和跨目录切换可以沿同一路径重建依赖。
+6. 基于已加载的资源处理 help 和 list-models，或继续准备 stdin、文件输入、主题和启动诊断。
+7. 将同一个 runtime 交给 interactive、print、JSON 或 RPC mode。
+
+help 需要加载扩展注册的 CLI flags，list-models 需要加载模型配置和扩展 provider，因此它们位于 runtime 创建之后，不与提前退出的 auth、package/config 命令共用一条轻量分支。
 
 `createAgentSessionServices()` 刻意与创建 session 分开。原因是 cwd 变化会影响 settings、资源、工具路径和模型配置；会话切换时必须先按新 cwd 重建这些服务，再解析 session 选项。
 
@@ -24,103 +25,89 @@
 1. [`cli.ts`](../packages/coding-agent/src/cli.ts)：确认极薄进程入口怎样调用 `main()`。
 2. [`main.ts`](../packages/coding-agent/src/main.ts)：只跟踪 `appMode`、`settingsManager`、`modelRuntime`、`sessionManager` 和 `runtime` 的创建与传递。
 3. [`agent-session-services.ts`](../packages/coding-agent/src/core/agent-session-services.ts)：确认这些依赖为何要先于 session 创建。
-4. `agent-session-runtime.ts`：它负责替换整组服务，具体切换顺序见本章 4.1。
+4. [`agent-session-runtime.ts`](../packages/coding-agent/src/core/agent-session-runtime.ts)：它负责替换整组服务，具体切换顺序见本章 4.1。
 5. [`sdk.ts`](../packages/coding-agent/src/core/sdk.ts)：对照 SDK 怎样复用相同组装路径。
 
 ## 2. 一次请求的完整路径
 
-这张图只描述正式本地请求。protocol/client/server 不在这条调用链中。实线表示调用或提交，虚线表示返回值或事件；一个 turn 是一次模型响应及其工具结果，同一请求可能经过多个 turn，直到模型不再请求工具。
+一次请求同时存在“向下的调用”和“向上的事件”。把它们连同扩展 hook、UI 更新和持久化全画在一张时序图中，会掩盖主路径。下面分成两张图：第一张只看请求如何执行，第二张只看事件如何被处理。
+
+### 2.1 请求控制流
+
+`Mode` 是 interactive、print、JSON 或 RPC 适配器。输入预处理都发生在 `AgentSession.prompt()` 内：它调用 `ExtensionRunner` 处理 command/input hook，再从已加载的 `ResourceLoader` 读取 skill 和 prompt template 定义。这两条旁路不放进主控制流图。
 
 ```mermaid
 sequenceDiagram
-  autonumber
   actor U as 用户
-  participant MODE as Mode / TUI
+  participant MODE as Mode
   participant S as AgentSession
-  participant EXT as 模板 / 扩展
-  participant P as SessionManager
   participant A as Agent
   participant L as agent-loop
-  participant M as pi-ai Provider
-  participant T as Tool Runtime
+  participant P as Provider
+  participant T as Tool
 
-  rect rgb(235, 244, 255)
-    Note over U,T: A · 输入与预处理
-    U->>MODE: 提交 prompt
-    MODE->>S: prompt(text, images, source)
-    S->>EXT: 扩展命令或 input hook
-    EXT-->>S: 转换后的输入，或直接消费请求
-    S->>S: 展开 skill / prompt template
-    S->>S: 检查 streaming 队列、模型、认证和压缩
-    opt 输入继续进入 Agent
-      S->>EXT: before_agent_start
-      EXT-->>S: system prompt / message 等调整
-    end
-  end
+  U->>MODE: 提交 prompt
+  MODE->>S: prompt(text, images, source)
+  S->>S: 预处理、队列/认证检查、必要时预压缩
+  opt 输入未被扩展直接处理或转入队列
+    S->>A: prompt(messages)
+    A->>L: runAgentLoop(context, config)
 
-  rect rgb(255, 249, 225)
-    Note over U,T: B · 建立本次 Agent run
-    S->>A: prompt(user message)
-    A->>L: runAgentLoop(context, tools, signal)
-    L-->>A: agent_start / turn_start / message_start(user)
-    A-->>S: awaited AgentEvent
-    S->>EXT: user message 事件 hook
-    S-->>MODE: 转发会话事件并刷新界面
-    S->>P: message_end 后追加 user message
-  end
-
-  rect rgb(255, 244, 232)
-    Note over U,T: C · 模型 turn
-    loop 每个模型 turn
-      L->>M: stream(model, context, tools, signal)
-      M-->>L: start / text delta / thinking delta / tool call / done
-      L-->>A: message_start / message_update / message_end
-      A-->>S: awaited AgentEvent
-      S->>EXT: assistant message 事件 hook
-      S-->>MODE: 流式更新文本、thinking 与 usage
-      S->>P: message_end 后持久化 assistant message
-
-      alt Assistant 包含 tool call
-        rect rgb(248, 239, 255)
-          Note over L,T: D · 工具执行与回灌
-          L->>T: execute(toolCall, signal, onUpdate, context)
-          T-->>L: tool_execution_update（可选，多次）
-          L-->>A: tool_execution_start / update / end
-          A-->>S: awaited AgentEvent
-          S-->>MODE: 显示工具进度与结果
-          T-->>L: ToolResult
-          L-->>A: message_start / message_end(toolResult)
-          A-->>S: awaited AgentEvent
-          S->>EXT: tool result 事件 hook
-          S-->>MODE: 转发完成结果
-          S->>P: 持久化 tool result
-          Note over L,M: tool result 加入 context，开始下一次模型 turn
-        end
-      else Assistant 不再请求工具
-        L-->>A: turn_end / agent_end
+    loop 每个 turn
+      L->>P: stream(model, context, tools)
+      P-->>L: assistant stream
+      opt assistant 包含 tool call
+        L->>T: execute(args)
+        T-->>L: ToolResult
+        Note over L: ToolResult 加入 context
       end
+      L->>L: emit turn_end，读取 steering
     end
-  end
 
-  rect rgb(235, 250, 240)
-    Note over U,T: E · 收尾与呈现
-    A-->>S: agent_end 事件
-    S->>EXT: agent_end hook
-    EXT-->>S: hook 完成，或加入 follow-up
-    S-->>MODE: 转发 agent_end
-    opt 达到阈值或发生上下文溢出
-      S->>S: 自动压缩 / 重试策略
+    L->>L: 无 tool/steering 时读取 follow-up
+    L-->>A: follow-up 也为空时 emit agent_end
+    A-->>S: prompt() 完成
+    opt 需要 retry 或 overflow recovery
+      S->>A: continue()
     end
-    S-->>MODE: agent_settled / 最终状态
-    MODE-->>U: 显示最终回答
+    S-->>MODE: agent_settled
   end
-
-  Note over S,P: 持久化不是最后一次性执行；user、assistant、tool result 会随事件逐步追加到 JSONL 会话。
+  MODE-->>U: 显示结果
 ```
 
-### 怎样读这张图
+`turn_end` 每个 turn 都会发生，不只是“assistant 没有 tool call”时才发生。图中的 `execute` 包含参数准备、校验以及扩展 `tool_call`/`tool_result` 截获点；`tool_execution_*` 是另一组用于状态、扩展通知和 UI 的事件。
 
-- `Mode / TUI` 是表现层：交互模式、print、JSON 和 RPC 都把请求交给同一个 `AgentSession`。
+### 2.2 事件处理与持久化
+
+`agent-loop` 不直接调用 UI 或 `SessionManager`。它发出的每个事件都先经过 `Agent` 更新内部状态，再交给 `AgentSession` 的 awaited listener：
+
+```mermaid
+sequenceDiagram
+  participant L as agent-loop
+  participant A as Agent
+  participant S as AgentSession
+  participant EXT as ExtensionRunner
+  participant MODE as Mode listener
+  participant SM as SessionManager
+
+  L->>A: emit(AgentEvent)
+  A->>A: 更新 Agent.state
+  A->>S: await listener(event)
+  S->>EXT: await 对应扩展事件
+  EXT-->>S: hook 完成
+  S-->>MODE: 发布 AgentSessionEvent
+  opt message_end
+    S->>SM: appendMessage(event.message)
+  end
+  S-->>A: listener 完成
+  A-->>L: emit 完成
+```
+
+这条顺序意味着：扩展可在 `message_end` 时替换 message，对外 listener 和持久化随后看到的都是替换后的对象。公开 listener 当前是同步通知；被 await 的是 `Agent` 到 `AgentSession` 的内部事件处理链。
+
+### 怎样读这两张图
+
+- `Mode` 是表现或传输适配层；只有 interactive mode 使用 TUI。
 - `Agent` 保存运行状态，并拥有 steer/follow-up 核心队列；`agent-loop` 执行模型—工具循环和队列投递；`pi-ai Provider` 处理具体供应商协议。
 - 当前 coding-agent 的 `AgentSession` 在这些通用能力外处理输入展开、扩展、设置同步、UI 队列镜像、产品 JSONL 持久化，以及自动压缩/重试的触发与呈现。压缩和队列不是 coding-agent 独有能力；这里只描述正式产品的实际接入路径。
 - 工具调用不会创建新的用户请求。工具结果被加入同一个 Agent run 的上下文，随后开始下一个模型 turn。
@@ -128,7 +115,7 @@ sequenceDiagram
 
 关键点是 `Agent` 的事件监听器会被 await。`agent_end` 表示循环不再产生新事件，但只有所有监听器完成、运行态清理后，`waitForIdle()` 才真正完成。因此持久化或扩展 hook 可以在“对外宣告 idle”前完成一致性工作。
 
-### 2.1 具体实现
+### 2.3 具体实现
 
 按一次请求向下调用、再由事件返回的顺序阅读：
 
@@ -154,7 +141,7 @@ steering 在当前 assistant turn 的工具调用结束后注入，follow-up 在
 
 ### 3.1 具体实现
 
-队列逻辑就在[前面的请求链](#21-具体实现)里，分别关注三个局部：
+队列逻辑就在[前面的请求链](#23-具体实现)里，分别关注三个局部：
 
 1. `agent-session.ts` 的 `_queueSteer()` 和 `_queueFollowUp()`：产品层怎样维护 UI 队列镜像。
 2. `agent.ts` 的 `PendingMessageQueue`：核心队列怎样保存和取出消息。
@@ -169,8 +156,8 @@ steering 在当前 assistant turn 的工具调用结束后注入，follow-up 在
 3. 发 `session_shutdown`。
 4. 同步解绑宿主 UI，dispose 旧 session。
 5. 按目标 cwd 创建 settings/model/resource 服务。
-6. 创建新 session 并发 `session_start`。
-7. UI 重新订阅并绑定扩展。
+6. 创建新 session 并替换 runtime 中的对象图。
+7. 宿主重新订阅、调用 `bindExtensions()`，并在这个绑定阶段发 `session_start`。
 
 这个顺序用于避免两类具体错误：旧扩展组件在新 session 中继续接收事件，以及跨 cwd 恢复时错误复用原目录的设置或资源。
 
@@ -185,6 +172,6 @@ steering 在当前 assistant turn 的工具调用结束后注入，follow-up 在
 - Interactive mode 将事件映射到 TUI 组件，并提供完整命令、overlay 和编辑器。
 - Print mode 订阅同一事件流，只输出文本或 JSONL，然后退出。
 - RPC mode 把 stdin/stdout 变成控制协议，适合外部进程托管。
-- protocol/client/server 是独立的跨进程基础设施。当前正式入口没有把它们接到 `AgentSession`。
+- protocol/client/server/Chord 是独立的实验性跨进程路径。它没有包装 `AgentSession`，而是在每会话 worker 中运行 `AgentHarness`。
 
-interactive、print、JSON 和 RPC 不是四套 Agent，而是同一个 `AgentSession` 上的四种表现或传输方式。client/server 不是第五个 mode，也不是另一种 Agent。
+interactive、print、JSON 和 RPC 不是四套 Agent，而是同一个 `AgentSession` 上的四种表现或传输方式。实验性 client/server 也不是第五个 mode；它是另一条 durable runtime 与 service 架构，默认正式入口不进入它。

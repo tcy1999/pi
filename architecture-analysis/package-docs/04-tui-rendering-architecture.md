@@ -28,6 +28,10 @@ regular 模式在主屏幕工作，尽量保留终端 scrollback，并对可见�
 
 它们共享组件和焦点基础，但输出策略不同，所以 fullscreen 不是给 regular 模式简单套一层高度限制。
 
+当前具体类型是 `TuiMainScreen` 与 `TuiAltScreen`。coding-agent 不再把创建参数散落在各 presentation：`createInteractiveTui()` 是共享 composition root，统一终端、剪贴板、URL、搜索样式、jump-to-end、滚动条和右键粘贴；`createInteractiveTuiReference()` 为组件提供稳定代理，使底层 renderer 替换时不必重建所有引用。
+
+fullscreen chat 的布局由 `createChatViewport()` 组合：可滚动 transcript 占剩余高度，pending/status/widgets/editor/footer 组成固定 dock。稳定 `InteractiveMode` 与实验性 client TUI 都复用这套 renderer/viewport，因此“共享外观”不等于“共享 AgentSession 状态”。
+
 ## 4. 焦点与硬件光标
 
 TUI 只把输入发送给当前 focused component。可聚焦组件在渲染文本中放置零宽 `CURSOR_MARKER`，renderer 移除标记并把硬件光标移动到对应单元格。这让输入法候选窗口能够跟随真实编辑位置。
@@ -46,6 +50,7 @@ Overlay 同时具有视觉顺序和焦点顺序。每个 overlay 记录显示状
 
 ## 7. 具体实现
 
-1. 读 [`tui.ts`](../../packages/tui/src/tui.ts) 的 `requestRender()` 与 render pass，确认差量输出怎样调度。
-2. 继续读同一文件的 focus 与 overlay 方法，确认输入和视觉层级的状态转换。
-3. 读 [`interactive-mode.ts`](../../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 `handleEvent()`，确认 coding-agent 怎样把 Agent 事件变成组件状态。
+1. 读 [`tui.ts`](../../packages/tui/src/tui.ts) 的 `TuiBase.requestRender()`、`TuiMainScreen` 与 `TuiAltScreen` render pass，确认差量输出怎样调度。
+2. 继续读同一文件的 focus、overlay、viewport、selection 与 search，确认输入和视觉层级的状态转换。
+3. 读 [`tui-renderer.ts`](../../packages/coding-agent/src/modes/interactive/tui-renderer.ts) 与 [`chat-viewport.ts`](../../packages/coding-agent/src/modes/interactive/chat-viewport.ts)，确认 coding-agent 的共享 composition root 和 fullscreen dock。
+4. 读 [`interactive-mode.ts`](../../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 `handleEvent()`，确认正式路径怎样把 Agent 事件变成组件状态。

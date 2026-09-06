@@ -61,7 +61,7 @@ compaction 缩短同一活动路径的模型上下文；branch summary 在树导
 
 ## 6. 与 agent-core durable session 的区别
 
-本篇描述的是正式产品当前使用的 `SessionManager`。agent-core 的 `SessionRepo`/`SessionStorage` 是另一套 durable session API，拥有不同 entry/record 类型与后端。两者不能因为都使用 JSONL、树和压缩就视为同一实现。
+本篇描述的是正式产品当前使用的 `SessionManager`。agent-core 的 `SessionRepo`/`Storage` 是另一套 durable session API，使用 entry、typed value/list、usage 与可恢复 operation。两者不能因为都使用 JSONL、树和压缩就视为同一实现；只有实验性 session worker 使用后者。
 
 ## 7. 具体实现
 

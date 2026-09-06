@@ -1,93 +1,97 @@
-# AgentHarness：当前实现与目标规格
+# AgentHarness：durable runtime 与剩余切片
 
-来源：`packages/agent/docs/harness.md`，并以 `packages/agent/src/harness/` 当前源码校正完成度。Future、build order 和 open questions 不作为当前事实。
+来源：`packages/agent/docs/harness.md`，并以 `packages/agent/src/harness/` 当前源码校正完成度。规范中明确标记为 design-only 或 not implemented 的部分不写成当前保证。
 
 ## 1. 先看结论
 
-`harness.md` 是 durable Agent runtime 的实现规格，不是“当前全部已经完成”的说明。当前状态应拆成两部分：
+`AgentHarness` 已从数据结构外壳变成可运行的 durable Agent runtime：
 
 | 范围 | 当前状态 |
 |---|---|
-| durable session 类型、树、record、lane、JSONL/内存/SQLite 后端 | 已实现并有公共行为测试 |
-| compaction、branch summary、工具、prompt/skill、reducer、telemetry 等辅助模块 | 已有实现 |
-| `AgentHarness` 配置 getter/setter、基础 session 访问 | 已实现 |
-| `prompt`、`compact`、`resume`、`abort`、队列、lane、watch、完整恢复与执行驱动 | 返回 `HarnessNotImplemented` |
+| durable Session、JSONL/内存/SQLite 后端与 conformance | 已实现 |
+| lane 获取/创建、run、compaction、navigation、resume、abort 与队列 | 已实现 |
+| provider/tool checkpoint、retry、deferred response、工具落位与 terminal result | 已实现 |
+| lane event/hook、`watch()` snapshot + 增量 | 已实现 |
+| 显式 Context 与 typed telemetry schema | Context 已贯穿；大多数 runtime span 尚未接线 |
+| session 级 `watchSession()` | 唯一公开 stub，抛出 `SliceNotImplemented` |
+| JSONL 物理 snapshot compaction、search、未来格式迁移 | 规范已描述，尚未实现或尚未激活 |
 
-所以它不能被描述为已完成、可替代 `AgentSession` 的独立运行时，也不在正式 `pi` 请求路径中。
+它仍未替代正式 `AgentSession`。默认 CLI/SDK 继续走产品会话；coding-agent 的实验性 session worker 已实际创建 `AgentHarness` 并通过 Chord service 暴露 lane 控制和 transcript。
 
-## 2. 它真正要解决的问题
+## 2. 它真正解决的问题
 
-普通 `Agent` 可以把一次模型—工具循环保存在内存里，但持久运行的 Agent 会遇到一个更难的问题：模型请求、shell 命令和文件修改发生在外部世界，而进程内状态随时可能丢失。假设工具已经删除文件，进程却在 tool result 写入会话之前退出；重启后只看聊天消息，无法判断工具是“尚未执行”还是“执行完成但结果未保存”。盲目重试可能再次删除，直接跳过又会留下没有结果的 tool call。
+普通 `Agent` 把一次模型—工具循环保存在内存里。持久运行的 Agent 还必须判断进程中断时外部效果进行到哪里。假设 shell 已删除文件，但 tool result 尚未提交；重启后只看聊天消息，无法知道应该重放还是跳过。
 
-Harness 规格因此把 Agent 定义成一个**可持久恢复的状态机**：会话不仅保存对话，还保存当前 operation 已走到哪一步、下一步准备产生什么效果，以及恢复时允许怎样处理。核心目标是让重启后的程序读取明确状态继续，而不是从残缺历史猜测进度。
+Harness 因此把会话操作建模为可持久恢复的状态机。会话同时保存对话树、lane 配置/状态、operation program counter、assistant frame、工具参数/输出、usage 和最终结果。恢复直接读取 operation state，不从残缺 transcript 反推进度。
 
 ## 3. 三条边界各自解决什么
 
 ```mermaid
 flowchart LR
-  HOST["宿主 / 调用方"] --> HARNESS["AgentHarness\n状态机解释器"]
-  HARNESS --> SESSION["durable session\n权威事实与运行位置"]
-  SESSION --> STORAGE["SessionStorage\n单会话读写"]
-  REPO["SessionRepo\n会话集合与生命周期"] --> SESSION
-  HARNESS --> ENV["ExecutionEnv\n文件与进程副作用"]
-  HARNESS --> MODEL["pi-ai\n模型副作用"]
+  HOST["宿主 / 调用方"] --> HARNESS["AgentHarness\n会话级资源与 lane"]
+  HARNESS --> LANE["AgentLane\noperation admission + Drive"]
+  LANE --> SESSION["durable Session\nentry / value / list / usage"]
+  SESSION --> STORAGE["Storage\n原子 commit 与查询"]
+  REPO["SessionRepo\n会话集合与 fork"] --> SESSION
+  LANE --> ENV["ExecutionEnv\n文件与进程副作用"]
+  LANE --> MODEL["pi-ai Models\n模型副作用"]
 ```
 
-`ExecutionEnv` 统一文件系统和 shell 能力。它的意义不是把 Node API 换个名字，而是让 Harness 明确知道哪些调用会触碰外部世界，并让同一套工具可以运行在本机 Node、自定义执行环境或内存测试替身中。它不保存 Agent 状态，也不负责恢复。
+`ExecutionEnv` 统一文件系统、shell、路径和临时文件能力，使同一 Harness 可以运行在 Node、本地替身或自定义环境。它不保存状态。
 
-durable session 是恢复依据。当前已实现的数据模型包含 entry、record、lane 和 fact：entry 构成对话树；record 记录 operation 等不直接进入模型上下文的事实；lane 指向树上的活动叶子；fact 保存名称和标签等可更新元数据。Harness 规格进一步把 operation 的完整当前状态作为 durable program counter：恢复时直接读取当前阶段，而不是倒推“最后可能执行了什么”。
+`Storage` 是单会话原子边界：一次 commit 可同时写 entry、value、list element 和 usage。`Session` 在其上提供 mutation line、branch、名称与标签；`SessionRepo` 管理会话集合和 branch/tree fork。
 
-`SessionStorage` 只处理一个已经打开的会话，提供追加、lane 移动和查询；`SessionRepo` 处理会话集合，负责 create、list、open、delete 和 fork。这个边界允许 `list()` 只读取 metadata，不获取 writer claim，而 `open()` 可以让 SQLite 等后端建立单写者租约。`Session` 位于二者之上，把 storage 包装为带活动 lane 的类型化会话树视图。
-
-`AgentHarness` 的目标角色是解释器：读取 durable operation state，选择下一步，调用模型或 `ExecutionEnv`，再提交结果和后继状态。它不是另一种存储，也不是 coding-agent 的 UI 层。当前这个解释器尚未接通，已完成的是其周围的大量数据结构和辅助模块。
+`AgentHarness` 保存共享 tools、resources、stream/retry/compaction 配置并管理 lane；`AgentLane` 接纳和驱动 run、compaction、navigation。一个 lane 同时绑定同名 branch、总配置和 durable lane state，每条 lane 最多一个 active operation。
 
 ## 4. 外部效果为什么要前后各提交一次
 
-规格的核心执行规则是：每次外部效果前后都持久化完整 operation 状态。
+运行时围绕 provider/tool 效果建立 durable checkpoint：
 
 ```text
-提交意图：即将调用模型或工具，预留结果 ID
+提交 effect-pending 状态、稳定 ID 和必要输入
     ↓
-执行外部效果：真正的 provider 请求或工具调用
+执行 provider 或工具
     ↓
-提交结果：结果、usage 和下一状态一起落盘
+提交 frame / tool output / usage 与下一 operation state
 ```
 
-崩溃若发生在两个提交之间，恢复代码至少能确定“效果可能发生过，但结果未确认”。这仍然不是 exactly-once：模型可能已经计费，外部系统也可能已经修改，Harness 无法用本地事务回滚它们。但不确定性被限制在一个有明确记录的窗口里。对于工具，再根据 `replay: safe | never` 决定重放只读操作，还是写入 synthetic interrupted result，避免危险操作重复执行。
+崩溃发生在中间时，恢复代码知道哪一种效果处于不确定窗口。provider attempt 使用稳定请求标识和 retry state；工具按 replay policy 处理，安全工具可以重放，不可重放工具生成 synthetic interrupted result。结果不是 exactly-once，但不确定性被显式限制，且不会盲目重复全部副作用。
 
-这是一种目标设计，不应误写成当前 `AgentHarness.prompt()` 已经完成了这条流程。当前源码仍未接通执行驱动。
+`Drive` 是唯一顶层状态推进写者。terminal transaction 先把 lane 切回 idle 并确定结果，再单独写不可变 `OperationResultRecord`；调用方可用 operation ID 查询最终结果，即使原调用连接已经断开。
 
 ## 5. 为什么不能把所有内容写成一种日志记录
 
-对话历史是长期事实，应该追加而不覆盖；operation state 是当前程序计数器，需要替换或删除；usage 是独立累计账本。三者变化规律不同，分开后可以满足：
+当前实现已经采用与数据寿命相匹配的四种 write：
 
-- 历史分支共享前缀，不复制整段对话。
-- operation 完成后清理临时状态，而不污染对话树。
-- 恢复读取当前状态，不必扫描整段历史推断缺了什么。
-- 搜索索引、分支缓存和统计可以作为可重建派生数据。
+- immutable entry：message、compaction、branch summary 和 custom 历史节点。
+- replaceable value：branch tip、lane config/state、operation meta/state/result 和工具 memo。
+- append-only list：assistant frames、pending tool output 等有序增量。
+- usage row：独立的 token/cost 累计与 adjustment。
 
-目标规格因此将其分别建模为不可变 entry、可覆盖的 register 和追加式 usage ledger。
-
-当前实现尚未完全等同于目标规格使用的三存储模型；当前 session API 暴露的是 entry、record、lane 和 fact。文档必须区分“规格希望怎样完成恢复”与“源码现在已经提供什么”，不能把目标 register/ledger 设计写成已接通的运行事实。
+这些 write 在同一 sequence 空间内原子提交。operation 结束后可删除临时 value/list，而 transcript entry 与 usage 保留；恢复只读当前 program counter，不必扫描整段历史猜测状态。
 
 ## 6. 多后端与公共行为测试的意义
 
-JSONL、内存和 SQLite 的目的不同：JSONL 适合简单本地持久化，内存实现适合测试或临时宿主，SQLite 适合事务、查询和 writer lease。它们共享 `SessionRepo`/`SessionStorage` 语义，才可以在不改上层 session 代码的情况下选择介质。
+JSONL、内存和 SQLite 用途不同，但共享 `Storage` 与 `SessionRepo` 语义。`createStorageConformance()` 固定原子写入、sequence、value/list、usage 和 branch scan；`createSessionRepoConformance()` 固定生命周期、所有权、消息与 fork 行为。
 
-`createSessionBackendConformance()` 会针对每个后端生成同一组行为测试，例如追加 entry 后的 parent/seq、lane 移动、fork 范围、查询结果和错误码。这里的 conformance 是“符合共同约定”：测试保障调用方看到的会话行为一致，不要求三个后端内部结构相同，也不等于 Harness 的 run/recovery 已经完成。
+JSONL v4 采用 header + committed writes；尾行损坏可修复，fork 通过临时文件原子发布。SQLite 将同一逻辑映射为事务表。规范中的 JSONL snapshot compaction 尚未实现，因此逻辑删除不会立即回收历史 write 的物理字节。
 
-## 7. Lane 的目标用途
+## 7. Lane 的运行语义
 
-lane 不是另一份 session。它是在同一会话树上的独立活动指针，可用于并行线程、子任务或其他共享历史的工作流。每个 lane 最多有一个活动 operation，以 lane mutation line 串行化状态相关修改。
+lane 不是另一份 session。它是在共享会话树上拥有独立 branch tip、配置、inbox 和 operation 的执行单元。`AgentHarness.lane(name)` 可取得既有 lane，也可通过带配置的 acquire 创建新 lane；`lanes()` 列出当前 lane。
 
-当前 durable session 已有 lane 数据结构，但 `AgentHarness.createLane()`、`lane()` 和 `lanes()` 尚未实现。因此这里只能称为已定义的数据模型和目标调度语义。
+`accept()` 原子接纳 run/compaction/navigation；高层 `prompt()` 等方法随后调用 `drive()`。steer、follow-up、next-run 与 write 进入 durable inbox，并按 checkpoint 规则取出。`watch()` 先生成完整 `LaneSnapshot`，订阅者调用 `start()` 后再释放 hydration 期间缓冲的更新，从而避免 snapshot 与增量之间出现空窗。
 
 ## 8. 与正式 AgentSession 的关系
 
-正式 CLI/SDK 当前使用 coding-agent 的 `AgentSession`、`SessionManager` 和产品压缩实现。Harness 工程复用了相同的问题域，但格式和运行入口独立。源码没有承诺它将替换 `AgentSession`，也没有一条 `Agent → AgentHarness → AgentSession` 的继承链。
+正式 CLI/SDK 使用 `AgentSession`、`SessionManager`、旧 extension 系统和产品 compaction。Harness 使用 durable `Session`、`AgentLane`、Harness hook/event 与 `ExecutionEnv`。二者共享 `pi-ai` 和部分问题域，但格式、扩展模型和生命周期独立。
+
+实验性 client/server 路径不是把 `AgentSession` 放到网络后面，而是在每会话 worker 中创建 Harness，并用 Chord facets 提供 `AgentController`、`Transcript`、`Models` 等服务。这个接入证明 Harness 已可运行，但不改变默认产品入口的稳定性标记。
 
 ## 9. 具体实现
 
-1. 读 [`agent-harness.ts`](../../packages/agent/src/harness/agent-harness.ts)，确认公开操作与 `HarnessNotImplemented` 边界。
-2. 读 [`session/types.ts`](../../packages/agent/src/harness/session/types.ts) 与 [`session/session.ts`](../../packages/agent/src/harness/session/session.ts)，确认 Harness 周围已经可用的 durable session 能力。
-3. 最后读 [`harness.md`](../../packages/agent/docs/harness.md) 理解目标设计，不要用目标规格替代当前实现。
+1. 读 [`agent-harness.ts`](../../packages/agent/src/harness/agent-harness.ts)，确认公开 `AgentHarness`、`AgentLane`、snapshot、event 和 hook 契约。
+2. 读 [`runtime/harness.ts`](../../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../../packages/agent/src/harness/runtime/lane.ts)，确认 lane 生命周期、admission、drive、恢复和 watch。
+3. 读 [`runtime/drive/`](../../packages/agent/src/harness/runtime/drive)，按 assistant、tools、checkpoint、recovery 和 terminal 拆分理解状态推进。
+4. 读 [`session/types.ts`](../../packages/agent/src/harness/session/types.ts)、[`session/values.ts`](../../packages/agent/src/harness/session/values.ts) 与 [`session/session.ts`](../../packages/agent/src/harness/session/session.ts)，确认存储和 mutation line。
+5. 最后读 [`harness.md`](../../packages/agent/docs/harness.md) 的 0.9 节，区分已实现机制与剩余切片。

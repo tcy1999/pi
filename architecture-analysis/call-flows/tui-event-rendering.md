@@ -20,19 +20,24 @@ Terminal input
 ```mermaid
 sequenceDiagram
   participant AGENT_LOOP as Agent loop
+  participant A as Agent
   participant S as AgentSession
   participant MODE as InteractiveMode
   participant C as TUI Components
-  participant TUI as pi-tui Renderer
+  participant TUI as TuiMainScreen / TuiAltScreen
   participant TERM as Terminal
 
-  AGENT_LOOP-->>S: AgentEvent
+  AGENT_LOOP->>A: emit AgentEvent
+  A->>S: await internal listener(event)
   S->>S: await extension hook
   S-->>MODE: AgentSessionEvent
   MODE->>MODE: handleEvent()
   MODE->>C: 更新 message/tool/status/footer 状态
   MODE->>TUI: requestRender()
-  S->>S: listener 完成后持久化 message_end
+  opt message_end
+    S->>S: 同步通知 listener 后持久化消息
+  end
+  S-->>A: internal listener 完成
   TUI->>TUI: 合并同一时间窗口的 render 请求
   TUI->>C: render(width)
   C-->>TUI: ANSI lines
@@ -41,6 +46,8 @@ sequenceDiagram
 ```
 
 `InteractiveMode.handleEvent()` 是产品事件到组件状态的映射点。`pi-tui` 不订阅 Agent；它只在被请求时读取组件树并渲染。
+
+renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根布局由 `createChatViewport()` 组合 transcript 和固定 dock。这两个 helper 也被实验性 client presentation 复用，但该路径从 Chord `Transcript` replica 更新组件，不订阅 `AgentSessionEvent`。
 
 ## 3. 为什么 `requestRender()` 不立即输出
 
@@ -74,7 +81,7 @@ sequenceDiagram
 
 ## 6. 失败与背压边界
 
-- `AgentSession` 的事件 listener 会被 await，因此状态更新、extension hook 和持久化可以在 run settle 前完成。
+- `Agent` 会 await `AgentSession` 注册的内部 listener，因此 extension hook 和持久化会在 run settle 前完成。`AgentSession.subscribe()` 的宿主 listener 是同步调用，其返回的 Promise 不会被等待。
 - `requestRender()` 只合并视觉刷新，不丢弃业务事件；组件状态仍按事件顺序更新。
 - terminal 尺寸、宽字符、图片行和 overlay 可能使文本索引不等于屏幕列，所有裁剪和光标定位必须使用 visible width。
 - TUI 停止后调度器不得继续写 terminal。
@@ -92,5 +99,6 @@ sequenceDiagram
 1. [`interactive-mode.ts`](../../packages/coding-agent/src/modes/interactive/interactive-mode.ts)：submit handler、`subscribeToAgent()`、`handleEvent()`、extension binding 和 session rebind。
 2. [`agent-session.ts`](../../packages/coding-agent/src/core/agent-session.ts)：Agent event 到产品 event、extension 和持久化的顺序。
 3. [`tui.ts`](../../packages/tui/src/tui.ts)：input dispatch、`requestRender()`、render scheduling、overlay 和 cursor 处理。
-4. [`editor.ts`](../../packages/tui/src/components/editor.ts)：focused editor 如何解释按键并触发提交。
-5. [`04-tui-rendering-architecture.md`](../package-docs/04-tui-rendering-architecture.md)：TUI 包内部渲染模型的补充说明。
+4. [`tui-renderer.ts`](../../packages/coding-agent/src/modes/interactive/tui-renderer.ts) 与 [`chat-viewport.ts`](../../packages/coding-agent/src/modes/interactive/chat-viewport.ts)：产品 renderer 配置和 fullscreen layout。
+5. [`editor.ts`](../../packages/tui/src/components/editor.ts)：focused editor 如何解释按键并触发提交。
+6. [`04-tui-rendering-architecture.md`](../package-docs/04-tui-rendering-architecture.md)：TUI 包内部渲染模型的补充说明。

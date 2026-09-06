@@ -25,7 +25,7 @@
 4. 分支与失败：取消、reload、abort、重试或部分失败发生在哪里。
 5. 不变量：修改代码时必须继续成立的约束。
 
-图中的调用只表示正式 CLI/SDK 当前可达路径。测试工具、示例和未接入正式入口的 `AgentHarness` 不混入主链。
+图中的调用只表示默认正式 CLI/SDK 的 `AgentSession` 路径。已接入实验性 client/server/session-worker 的 `AgentHarness` 路径不混入这组主链，单独见[跨进程协议、测试与工程治理](../07-remote-protocol-and-engineering.md)。
 
 ## 与其他文档的关系
 

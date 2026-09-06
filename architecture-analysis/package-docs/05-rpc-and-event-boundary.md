@@ -14,7 +14,7 @@ pi coding-agent 子进程
   → stdout JSONL response / event
 ```
 
-它适合单个 coding-agent 子进程的语言无关集成。protocol/client/server 则面向可插拔 transport、多会话 service、lease 和 snapshot，是另一套实验性边界。
+它适合单个正式 coding-agent 子进程的语言无关集成。另一套实验边界由 protocol/client/server + Chord 组成：外层协议负责 server/session/attachment 路由，Chord service 负责 typed 调用和 replicated state，session worker 内运行 `AgentHarness`。
 
 ## 2. 三类消息
 
@@ -28,7 +28,7 @@ pi coding-agent 子进程
 
 每条消息是一行 JSON，只以 LF `\n` 分隔。实现故意不用 Node `readline`，因为后者还会按 Unicode line separator 切分，而这些字符可以合法出现在 JSON 字符串中。
 
-这里的 framing 与远程 protocol 的“长度前缀 + CBOR”不同。RPC 选择 JSONL 是为了子进程管道易调试；远程 protocol 选择二进制 framing 是为了 transport-neutral 的严格消息边界。
+这里的 framing 与远程 protocol 的“长度前缀 + CBOR”不同。RPC 选择 JSONL 是为了子进程管道易调试；远程 protocol 选择二进制 framing 是为了 transport-neutral 的严格消息边界。远程 payload 中的 service 语义由 Chord 解析，不由 `pi-protocol` 枚举应用命令。
 
 ## 4. 流式消息是 delta，不是重复 snapshot
 

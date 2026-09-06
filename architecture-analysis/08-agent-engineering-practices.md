@@ -12,11 +12,11 @@ Pi 对运行时机制的实现深度高于它当前的系统评测覆盖：
 | 上下文管理 | 正式产品已有树形历史、上下文投影、compaction、branch summary 和 overflow 恢复 | 摘要由模型生成，仍可能丢失细节；压缩后 prompt cache 前缀会变化 |
 | Evaluation | 用真实 `AgentSession`、真实模型、隔离目录、判分器、重复运行和成对比较 | 当前仓库只有基础 smoke 与 extension authoring 两组 eval，尚不是覆盖压缩、恢复、安全和工具质量的完整基准集 |
 | 安全 | 有 project trust、扩展 tool hook、请求时凭据解析，以及可选外部 sandbox 示例 | 默认工具与扩展继承启动用户权限；Pi 没有内建沙箱，也不声称解决 prompt injection |
-| 失败恢复 | 有限定次数的 retry、overflow 压缩后重试、abort 归一化和逐条消息持久化 | 正式 `AgentSession` 不保证外部工具效果只发生一次；完整 durable Harness 恢复调度尚未实现 |
+| 失败恢复 | 正式路径有有限 retry/overflow 恢复；Harness 有 durable operation、effect checkpoint、resume 和 replay policy | 两条路径都不承诺外部效果 exactly-once；Harness 仍可能生成 interrupted result |
 | 并发一致性 | 单 active run、两类输入队列、并行工具的确定结果顺序、同路径写入队列 | 慢 hook 或监听器会阻塞主链路，这是确定顺序的代价 |
-| 可观测性 | 事件流、usage、费用、cache 统计和 eval 运行附件已可用 | agent-core 的完整 span 契约主要服务尚未完成的 Harness；不能说正式 coding-agent 已产生全部 trace |
+| 可观测性 | 正式路径有事件/usage/session；agent-core 已定义 typed schema、显式 Context 和部分 tool-hook span | 大多数 Harness runtime span 与跨进程 trace parent 重建尚未实现 |
 
-因此，“理解 Pi 重要实现”不能只读包地图。应重点理解它如何用事件边界、派生上下文、明确 hook 和可替换 provider 保持小内核，再由 coding-agent 加入产品策略。与此同时，也要看清它主动不解决的部分：默认权限隔离、完整 crash recovery 和成熟的全场景 eval 基准。
+因此，“理解 Pi 重要实现”不能只读包地图。默认产品仍以小型 Agent loop + `AgentSession` 组合产品策略；实验路径则以 durable `AgentHarness` + Chord services 组合跨进程运行。两者都要看清主动不解决的部分：默认权限隔离、外部效果 exactly-once 和成熟的全场景 eval 基准。
 
 ## 2. Evaluation：衡量端到端行为，而不是函数细节
 
@@ -93,21 +93,25 @@ Pi 没有把所有失败统一成“再跑一次”。不同失败发生在不�
 - 用户 abort 会传播到 provider、退避等待和工具，并归一化为完整 `aborted` assistant message，避免留下无法解释的半条流式消息。
 - 已完成的 user、assistant 和 tool result 在 `message_end` 时逐条追加，而不是等整个 run 成功才统一保存。
 
-这套策略的共同点是保持明确终态和有限恢复。但正式 `AgentSession` 仍无法保证外部工具效果只发生一次：进程可能在命令已经修改文件、tool result 尚未落盘时崩溃。Harness 规格提出用 operation 状态在外部效果前后各提交一次，并按工具 replay policy 恢复；当前完整 Harness 执行器尚未实现，不能把目标设计当作现有保证。
+这套策略的共同点是保持明确终态和有限恢复。但正式 `AgentSession` 仍无法保证外部工具效果只发生一次：进程可能在命令已经修改文件、tool result 尚未落盘时崩溃。
+
+`AgentHarness` 已实现更强的恢复边界。operation admission 原子记录 intent；Drive 在 provider/tool 效果前写 effect-pending 状态，在效果后把 frame、输出、usage 与下一状态一起提交；retry wait、cancel request 和 terminal result 也可恢复。安全重放的工具可以继续，不可重放工具在结果不确定时生成 synthetic interrupted result。这个设计把不确定性显式化，但仍不是 exactly-once：外部效果或模型计费可能已发生，单机事务不能撤销。
 
 ### 4.1 具体实现
 
 1. 读 [`retry.ts`](../packages/ai/src/utils/retry.ts)：确认错误分类、retry budget、指数退避和中止归一化。
 2. 普通 retry 与 overflow recovery 怎样接入 `AgentSession`，看[上下文压缩的具体实现](./04-session-and-persistence.md#36-具体实现)，再定位 `_prepareRetry()`。
 3. Agent loop 怎样处理 error、abort 和 tool result，见[核心 loop](./03-agent-core.md#25-具体实现)。
-4. 消息何时落盘，可以在[一次请求的实现链](./02-runtime-and-request-flow.md#21-具体实现)中跟踪 `_handleAgentEvent()`。
-5. Harness 的 operation/recovery 规格与当前缺口见 [`AgentSession` 与 `AgentHarness`](./03-agent-core.md#31-具体实现)。
+4. 消息何时落盘，可以在[一次请求的实现链](./02-runtime-and-request-flow.md#23-具体实现)中跟踪 `_handleAgentEvent()`。
+5. Harness 的 operation/recovery 实现与剩余切片见 [`AgentSession` 与 `AgentHarness`](./03-agent-core.md#31-具体实现)。
 
 ## 5. 并发：允许工作并行，但固定状态提交顺序
 
 Pi 同一 `Agent` 只允许一个 active run。用户在运行期间的新输入必须明确成为 steering 或 follow-up，避免两个 run 同时改写同一消息数组。单批工具可以并行执行，但 `ToolResultMessage` 按原始 tool-call 顺序进入 context；UI 进度仍按真实完成时间交错。文件工具再通过 mutation queue 串行化同一路径写入。
 
 事件监听器和需要返回值的 extension hook 会被顺序等待。这降低并发度，却保证下一阶段开始前，产品状态、扩展决策和持久化处于确定顺序。Pi 的取舍不是最大吞吐，而是让模型下一次看到的上下文可以复现。
+
+Harness 把并发边界提升到 lane：不同 lane 可共享 session 历史前缀并独立运行，但每条 lane 最多一个 operation；会话级 mutation line 再串行化跨 lane 的原子 commit。session worker 还用文件锁建立进程级所有权，server attachment 只授予 presentation-scoped 调用能力。这些层次分别解决“一个 lane 的状态机顺序”“一个 session 的写入顺序”和“一个进程拥有 durable 文件”，不能互相替代。
 
 ### 5.1 具体实现
 
@@ -117,7 +121,7 @@ Pi 同一 `Agent` 只允许一个 active run。用户在运行期间的新输入
 
 正式 coding-agent 当前最可靠的观测事实是 `AgentSessionEvent`、每条 assistant usage、工具进度、session JSONL 和 eval artifact。费用与 cache 统计直接从 provider usage 派生，不根据本地猜测宣称 cache hit。
 
-`pi-telemetry` 还定义了 provider request、operation、turn、retry step、tool、hook、event handler 和 session write 等 span 契约。span 是带开始时间、结束时间和属性的一段操作记录。但当前完整 Harness 调度未接通，正式 coding-agent 也没有把这些 Harness span 全部接入，所以该 schema 主要是可复用观测边界和目标运行时设计，不能当作当前产品已经生成的完整分布式 trace。
+`pi-telemetry` 还定义了 provider request、operation、turn、retry step、tool、hook、event handler 和 session write 等 span 契约。当前已落地的是显式 `Context` 传播、typed span helper，以及 `before_tool`/`after_tool` 的部分 hook span；大多数 Drive、event handler 和 session write span 仍未接线。正式 `AgentSession` 也没有自动产生这些 Harness span，跨进程 trace carrier 注入/提取尚未实现，不能把 schema 等同于完整分布式 trace。
 
 另一个容易混淆的机制是 install telemetry：它是可配置的安装/版本报告，不等于上述 Agent 运行 trace。
 
@@ -126,7 +130,7 @@ Pi 同一 `Agent` 只允许一个 active run。用户在运行期间的新输入
 ### 6.1 具体实现
 
 1. usage 与 cache 指标的数据来源见 [prompt cache 的具体实现](./05-ai-provider-layer.md#91-具体实现)。
-2. 读 [`telemetry.ts`](../packages/agent/src/harness/telemetry.ts) 与 [`telemetry-schema.md`](../packages/agent/docs/telemetry-schema.md)，确认 span 层次，同时留意它属于 Harness 设计边界。
+2. 读 [`telemetry.ts`](../packages/agent/src/harness/telemetry.ts)、[`hooks.ts`](../packages/agent/src/harness/hooks.ts)、[`telemetry.md`](../packages/agent/docs/telemetry.md) 与 [`telemetry-schema.md`](../packages/agent/docs/telemetry-schema.md)，区分已定义 schema、已接入 hook 和剩余 instrumentation。
 3. eval 怎样记录 token、费用、延迟和原生 session，见本章的[评测实现顺序](#21-具体实现)。
 4. 读 coding-agent 的 [`telemetry.ts`](../packages/coding-agent/src/core/telemetry.ts)，确认 install telemetry 与 Agent trace 是两件事。
 
@@ -137,6 +141,6 @@ Pi 同一 `Agent` 只允许一个 active run。用户在运行期间的新输入
 1. **小而通用的控制循环**：`Agent`/agent loop 只处理模型、工具、队列和事件；正式产品策略留给 `AgentSession`。
 2. **保存事实，派生模型视图**：session 保留完整历史树，context、compaction 和 branch summary 是面向下一次模型请求的投影。
 3. **在明确边界开放定制**：extension 通过声明过的 hook、tool、provider 和 UI API 改变行为，而不是要求通用 loop 理解每种产品需求。
-4. **不伪装安全与可靠性保证**：本地工具默认拥有用户权限，真正隔离交给 OS；现有产品只做有限 retry 和消息级持久化，更强的 crash recovery 明确留在尚未完成的 Harness 规格中。
+4. **不伪装安全与可靠性保证**：本地工具默认拥有用户权限，真正隔离交给 OS；正式产品只做有限 retry 和消息级持久化；Harness 提供 durable recovery，但明确不把它宣传成外部效果 exactly-once。
 
 这四点也是阅读 Pi 时最值得追踪的主线：每遇到一个机制，先判断它属于通用控制、产品策略、模型适配、持久事实，还是扩展边界。这里使用的是仓库已有模块边界，不是额外创造一套架构层次。

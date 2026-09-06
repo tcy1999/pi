@@ -6,7 +6,7 @@
 
 ```mermaid
 sequenceDiagram
-  participant MODE as TUI / Print / RPC
+  participant MODE as Mode adapter
   participant SESSION as coding-agent AgentSession
   participant AGENT as agent-core Agent
   participant AGENT_LOOP as agent-core agent-loop
@@ -20,18 +20,27 @@ sequenceDiagram
   AGENT->>AGENT_LOOP: runAgentLoop(context, config)
   AGENT_LOOP->>MODEL: stream(model, LLM context, tools)
   MODEL-->>AGENT_LOOP: assistant stream events
-  AGENT_LOOP-->>SESSION: message_start/update/end
+  AGENT_LOOP->>AGENT: emit message_start/update/end
+  AGENT->>SESSION: await internal listener(event)
+  SESSION-->>MODE: AgentSessionEvent
   SESSION->>STORE: message_end 时追加消息
   alt assistant 包含 tool calls
     AGENT_LOOP->>TOOL: execute(args, signal, onUpdate)
     TOOL-->>AGENT_LOOP: ToolResult
-    AGENT_LOOP-->>SESSION: tool execution + toolResult events
+    AGENT_LOOP->>AGENT: emit tool execution + toolResult events
+    AGENT->>SESSION: await internal listener(event)
+    SESSION-->>MODE: AgentSessionEvent
     SESSION->>STORE: 追加 tool result
     AGENT_LOOP->>MODEL: 带 tool result 的下一 turn
   end
-  AGENT_LOOP-->>SESSION: turn_end / agent_end
+  AGENT_LOOP->>AGENT: emit turn_end / agent_end
+  AGENT->>SESSION: await internal listener(event)
+  SESSION-->>MODE: AgentSessionEvent
+  AGENT-->>SESSION: prompt() 完成
   SESSION-->>MODE: agent_settled
 ```
+
+图中将工具的 `beforeToolCall`/`afterToolCall` 截获点省略为 `execute`。它们会调用 `ExtensionRunner` 的 `tool_call`/`tool_result` hook；工具状态另通过 `tool_execution_*` 事件走 `Agent → AgentSession` 链路。
 
 ## 2. `AgentSession.prompt()`：产品预处理
 
@@ -88,7 +97,7 @@ sequenceDiagram
 
 - 同一个 `Agent` 只能有一个 active run。
 - tool result 必须位于对应 assistant tool call 之后，不能被 custom message 插入拆开。
-- 所有会影响状态的事件 listener 必须在宣告 idle 前被 await。
+- `Agent` 到 `AgentSession` 的内部 listener 必须在宣告 idle 前完成；`AgentSession.subscribe()` 的公开 listener 是同步通知，不会被 await。
 - streaming 中的新输入必须显式选择 steer 或 follow-up 语义。
 - tool 执行异常必须转成结果或终止状态，不能让上下文留下悬空 tool call。
 

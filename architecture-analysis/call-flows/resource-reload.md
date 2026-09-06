@@ -33,10 +33,15 @@ sequenceDiagram
   RES->>PKG: resolve packages/resources
   PKG-->>RES: 带来源、scope、enabled 的路径
   RES->>RES: 重载 extensions/skills/prompts/themes/context/system prompt
-  S->>NEW: _buildRuntime(previous flags, active tools)
-  S->>NEW: session_start(reason: reload)
-  NEW-->>S: resources_discover 扩展资源
-  S->>S: 重建 tools 与 system prompt
+  S->>S: _buildRuntime(previous flags, active tools)
+  S->>NEW: 创建 runner，重建 tools 与 system prompt
+  opt session 已绑定宿主 context
+    S->>NEW: session_start(reason: reload)
+    S->>NEW: resources_discover
+    NEW-->>S: 追加的 skill/prompt/theme 路径
+    S->>RES: extendResources(paths)
+    S->>S: 再次重建 system prompt
+  end
 ```
 
 当前实现中 `AgentSession.reload()` 先显式 reload settings，`ResourceLoader.reload()` 内部还会再次 reload 同一个 manager。后一次是资源解析自身的契约：它需要确保 package 和资源选择基于最新设置，同时保留已经决定的 `projectTrusted` 状态。
@@ -52,7 +57,7 @@ sequenceDiagram
 7. 重载 skills、prompt templates 和 themes，并保存来源/冲突 diagnostics。
 8. 重新发现 AGENTS/CLAUDE context files、system prompt 和 append system prompt。
 
-extension 的 `resources_discover` 在新 runner 绑定后执行，因为只有活跃 extension context 才能动态贡献 skill/prompt/theme 路径。这些追加资源可能再次改变 system prompt。
+extension 的 `resources_discover` 在新 runner 绑定且发出 `session_start` 后执行，因为只有活跃 extension context 才能动态贡献 skill/prompt/theme 路径。它不追加 extension tool；追加的 skill 可能再次改变 system prompt，prompt/theme 则更新各自的资源集合。只有已通过 `bindExtensions()` 建立宿主绑定的 session 才走这一段。
 
 ## 4. 为什么必须共享 `SettingsManager`
 

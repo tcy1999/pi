@@ -13,24 +13,29 @@ sequenceDiagram
   participant HOST as Mode / Extension command
   participant RT as AgentSessionRuntime
   participant OLD as Old AgentSession
+  participant OLD_EXT as Old ExtensionRunner
   participant FACTORY as createRuntime factory
   participant NEW as New AgentSession
 
   HOST->>RT: new / resume / fork / import
-  RT->>OLD: session_before_switch 或 session_before_fork
+  RT->>OLD_EXT: session_before_switch 或 session_before_fork
   alt extension 取消
-    OLD-->>RT: cancel: true
+    OLD_EXT-->>RT: cancel: true
     RT-->>HOST: 保留旧 session
   else 继续替换
     RT->>OLD: abort() 并等待活动响应收尾
-    RT->>OLD: session_shutdown
+    RT->>OLD_EXT: session_shutdown
     RT->>HOST: beforeSessionInvalidate（同步 UI 清理）
     RT->>OLD: dispose()
     RT->>FACTORY: 目标 cwd + SessionManager + session_start 元数据
     FACTORY-->>RT: 新 session + 新 services + diagnostics
     RT->>RT: apply(result)
     RT->>HOST: rebindSession(new session)
-    RT->>NEW: withSession 回调
+    HOST->>NEW: 重新订阅并 bindExtensions()
+    NEW-->>HOST: session_start 与扩展绑定完成
+    RT->>NEW: createReplacedSessionContext()
+    NEW-->>RT: 新 session context
+    RT->>HOST: withSession(new context)
   end
 ```
 
@@ -49,7 +54,7 @@ sequenceDiagram
 
 ## 4. 所有权变化
 
-`AgentSessionRuntime` 是稳定引用；内部的 `session`、`services`、`diagnostics` 和 `modelFallbackMessage` 会整体替换。调用方不能长期缓存旧 `AgentSession`、extension context 或 resource loader。
+`AgentSessionRuntime` 是稳定引用；内部的 `session`、`services`、`diagnostics` 和 `modelFallbackMessage` 会整体替换。调用方不能长期缓存旧 `AgentSession`、extension context 或 resource loader。`session_start` 不是 factory 创建 session 时自动发出；它由宿主在 `rebindSession` 期间调用 `bindExtensions()` 时发出。
 
 宿主通过两种回调参与替换：
 

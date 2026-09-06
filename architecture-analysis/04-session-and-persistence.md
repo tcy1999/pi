@@ -5,7 +5,7 @@
 | 子系统 | 使用者 | 核心类型 | 存储 |
 |---|---|---|---|
 | coding-agent 产品会话 | 正式 CLI/SDK 的 `AgentSession` | `SessionManager` | coding-agent JSONL |
-| agent-core durable session | Harness 工程和自定义宿主 | `Session`、`SessionRepo`、`SessionStorage` | JSONL、内存、SQLite |
+| agent-core durable session | `AgentHarness`、实验性 session worker 和自定义宿主 | `Session`、`SessionRepo`、`Storage` | JSONL、内存、SQLite |
 
 ## 1. 正式产品会话
 
@@ -90,14 +90,16 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 
 ## 4. Durable session 模型
 
-`packages/agent/src/harness/session` 把会话定义为追加式日志，包含四类 mutation：
+`packages/agent/src/harness/session` 把一个原子 commit 表示为四类 write：
 
-- entry：有 `id`、`parentId`、`seq` 的历史节点。
-- record：operation start/finish、usage 等不直接进入模型上下文的运行记录。
-- lane：命名指针，指向 entry 树的某个叶子；默认 lane 是 `main`。
-- fact：会话名称、节点标签等可更新事实。
+- entry：有 `id`、`parentId`、`seq` 和时间戳的不可变历史节点。
+- value set/delete：按 namespace/key 保存当前值，例如 branch tip、lane config/state 和 operation state。
+- list append/delete：保存有序的追加事实，当前用于 assistant frame 和工具输出等运行记录。
+- usage：独立累计的 usage row，可关联 entry，也可表示 adjustment。
 
-这里拆成两个接口，不是为了抽象而抽象，而是因为操作范围不同：`SessionRepo` 面对“有哪些会话”，负责创建、列出、打开、删除和 fork；`SessionStorage` 面对“一个已打开的会话里有什么”，负责 entry、record、lane、fact 和查询。`Session` 再把底层 storage 包装成带活动 lane 的会话树视图。这样列出会话不必先取得每个会话的写入权，而打开会话时后端可以建立单写者约束。
+这些写入共享同一个全局 sequence 空间并在一次 `Storage.commit()` 中原子发布。entry 适合保留事实树；value 适合可替换的程序计数器；list 适合流式追加；usage 适合独立统计。把它们硬塞成一种记录会迫使恢复扫描整段历史，或让临时 operation state 污染对话树。
+
+接口按范围拆分：`SessionRepo` 面对“有哪些会话”，负责创建、列出、打开、删除和 fork；`Storage` 面对一个已打开会话的原子写入与查询；`StorageBackedSession` 再提供 branch、名称/标签和 mutation line。`Session.mutate()` 给调用方一个 callback-scoped mutator，整段期间独占会话 mutation line，且最多提交一次。这样上层可以先读取当前 state、验证不变量，再把 entry、value、list 与 usage 一起提交。
 
 ## 5. 树、lane 与上下文
 
@@ -111,11 +113,11 @@ flowchart LR
   X["lane: experiment"] -.-> D
 ```
 
-分支不需要复制整个消息数组，只需让 lane 指向另一个节点，再沿 parent 链计算活动路径。`buildSessionContext()` 把路径中的 entry 投影成 LLM messages，并派生当前模型、thinking level 和 active tools。
+branch 是 durable session 中的命名历史指针；lane 是附着在同名 branch 上的 Agent 执行配置与状态。数据-only branch 可以没有 lane config；`AgentHarness.lane()` 只会取得或显式创建一条配置完整的 Agent lane。分支不需要复制整个消息数组，只需更新 `pi.branch.tip` value，再沿 parent 链计算活动路径。Harness context projection 把路径中的 message/compaction/branch-summary/custom entry 投影成模型消息；模型、thinking level 和 active tools 来自 lane configuration，不再通过历史中的 change entry 派生。
 
 ## 6. Agent-core compaction 模块
 
-Agent-core 的 compaction 模块会生成可写入 `compaction` entry 的 summary、压缩前 token 数和 retained tail；durable session 的 context projection 使用最近一次 compaction 的 summary、tail 和后续节点构建模型上下文，原消息仍保留在历史树中。当前 `AgentHarness.compact()` 尚未实现，因此不能描述成 Harness 已经完成了生成、追加和恢复的整条调度。
+Agent-core 的 compaction 模块会生成可写入 `compaction` entry 的 summary、压缩前 token 数和 retained tail；durable session 的 context projection 使用最近一次 compaction 的 summary、tail 和后续节点构建模型上下文，原消息仍保留在历史树中。`AgentLane.compact()` 已接入 operation admission、可恢复 summary retry、hook、usage 与 terminal result；普通 run 也会在 checkpoint 处根据阈值触发 compaction。
 
 分支跳转也可以生成 branch summary，把离开路径的必要信息带到目标分支。压缩和分支摘要都是上下文投影，不是删除历史。其实现位于 `packages/agent/src/harness/compaction/`，与 coding-agent 的产品压缩代码独立。
 
@@ -123,29 +125,29 @@ Agent-core 的 compaction 模块会生成可写入 `compaction` entry 的 summar
 
 ### JSONL
 
-agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一个 mutation。写入先追加磁盘再更新内存状态；每个 storage 用 promise tail 串行化 mutation。
+agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一个已提交 write。写入先追加磁盘再更新内存状态；Session mutation line 保证一个会话只有一条提交序列。
 
 恢复逻辑可以修复最后一行被截断或缺少换行的情况。fork 先写完整临时文件，再原子发布目标文件。
 
 ### 内存
 
-`InMemorySessionRepo`/`InMemorySessionStorage` 实现同一接口，用于测试或不需要落盘的宿主。
+`MemorySessionRepo` 与内存 `Storage` 实现同一接口，用于测试或不需要落盘的宿主。
 
 ### SQLite
 
-`pi-session-backend-sqlite-node` 提供 `SqliteSessionRepository`，内部 storage 实现同一 `SessionStorage` 接口。它把 sessions、entries、lanes、records 和 facts 等映射到表，并提供事务、writer lease、查询和 branch cache。
+`pi-session-backend-sqlite-node` 提供 `SqliteSessionRepo` 与 `SqliteStorage`。它把 sessions、entries、values、list elements、usage 和统计映射到表，并以数据库事务实现同一原子 commit 语义。会话所有权由 repo/open 边界协调，而不再通过旧的 writer-lease/branch-cache 模块描述。
 
-三种后端都执行 `createSessionBackendConformance()` 生成的同一组测试。测试不比较内部文件或数据表，而是对每个 `SessionRepo` 做相同操作，再比较可观察结果：父子关系和全局序号怎样分配、lane 怎样移动、fork 复制哪部分树、查询顺序是什么、无效目标返回什么错误。它证明的是“这些后端都遵守同一个 session API 语义”，不是证明实现代码或性能相同。`conformance` 在这里就是“符合共同约定”。
+三种后端共享两层公共行为测试：`createStorageConformance()` 检查原子 writes、sequence、value/list、usage、branch scan 和 close；`createSessionRepoConformance()` 检查生命周期、所有权、消息、branch/tree fork 和目标预留。测试不比较内部文件或数据表，只比较调用方可观察语义。
 
 ### 7.1 具体实现
 
-1. 读 [`types.ts`](../packages/agent/src/harness/session/types.ts) 的 `SessionRepo` 与 `SessionStorage`，先确认集合操作和单会话操作的边界。
-2. 读 [`session.ts`](../packages/agent/src/harness/session/session.ts)，确认 active lane、树导航和追加操作怎样组合底层 storage。
+1. 读 [`types.ts`](../packages/agent/src/harness/session/types.ts) 的 `Storage`、`Session` 与 `SessionRepo`，先确认原子写入、单会话和会话集合的边界。
+2. 读 [`values.ts`](../packages/agent/src/harness/session/values.ts) 与 [`session.ts`](../packages/agent/src/harness/session/session.ts)，确认 typed value/list、branch 和 mutation line 怎样组合底层 storage。
 3. 选择一个后端研究落盘策略：[`jsonl/repo.ts`](../packages/agent/src/harness/session/jsonl/repo.ts) 与 [`jsonl/storage.ts`](../packages/agent/src/harness/session/jsonl/storage.ts)，或 [`sqlite-node/src`](../packages/session-backends/sqlite-node/src)。
-4. 需要理解后端必须保持的共同语义时，再读 [`conformance.ts`](../packages/agent/src/harness/session/testing/conformance.ts)；它是接口契约说明，不是主实现入口。
+4. 需要理解后端必须保持的共同语义时，再读 [`conformance/storage.ts`](../packages/agent/src/harness/session/testing/conformance/storage.ts) 与 [`conformance/session-repo.ts`](../packages/agent/src/harness/session/testing/conformance/session-repo.ts)。
 
 ## 8. 两个子系统不能混用名称
 
-正式 CLI 的 `SessionManager` JSONL 不实现 durable `SessionStorage`，也不是 `SessionRepo` 的一个后端。反过来，SQLite backend 也不会自动替换正式 CLI 的 JSONL。
+正式 CLI 的 `SessionManager` JSONL 不实现 durable `Storage`，也不是 `SessionRepo` 的一个后端。反过来，SQLite backend 也不会自动替换正式 CLI 的 JSONL。
 
-两边都有树、分支、上下文投影和摘要压缩，是因为它们解决相同类别的问题；这不代表它们已经接入同一运行时。当前正式 CLI/SDK 使用 `AgentSession` + `SessionManager`。durable session API 已有可运行后端，但上层 `AgentHarness` 调度尚未完成。
+两边都有树、分支、上下文投影和摘要压缩，是因为它们解决相同类别的问题；这不代表它们已经接入同一运行时。当前正式 CLI/SDK 使用 `AgentSession` + `SessionManager`；实验性 client/server/session-worker 路径使用 `AgentHarness` + durable `Session`。两套 JSONL 格式和运行时仍然独立。
