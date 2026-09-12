@@ -32,6 +32,8 @@ regular 模式在主屏幕工作，尽量保留终端 scrollback，并对可见�
 
 fullscreen chat 的布局由 `createChatViewport()` 组合：可滚动 transcript 占剩余高度，pending/status/widgets/editor/footer 组成固定 dock。稳定 `InteractiveMode` 与实验性 client TUI 都复用这套 renderer/viewport，因此“共享外观”不等于“共享 AgentSession 状态”。
 
+工作、压缩、分支摘要和重试状态都实现同一个 `StatusIndicator` 边框渲染接口。当前 editor 支持时，活动状态嵌入顶部边框；切换 editor/renderer 会重新放置该 indicator。fullscreen 高度不足时 footer 的最小高度可以缩到 0，把有限空间优先留给输入与活动状态。
+
 ## 4. 焦点与硬件光标
 
 TUI 只把输入发送给当前 focused component。可聚焦组件在渲染文本中放置零宽 `CURSOR_MARKER`，renderer 移除标记并把硬件光标移动到对应单元格。这让输入法候选窗口能够跟随真实编辑位置。
@@ -53,4 +55,4 @@ Overlay 同时具有视觉顺序和焦点顺序。每个 overlay 记录显示状
 1. 读 [`tui.ts`](../../packages/tui/src/tui.ts) 的 `TuiBase.requestRender()`、`TuiMainScreen` 与 `TuiAltScreen` render pass，确认差量输出怎样调度。
 2. 继续读同一文件的 focus、overlay、viewport、selection 与 search，确认输入和视觉层级的状态转换。
 3. 读 [`tui-renderer.ts`](../../packages/coding-agent/src/modes/interactive/tui-renderer.ts) 与 [`chat-viewport.ts`](../../packages/coding-agent/src/modes/interactive/chat-viewport.ts)，确认 coding-agent 的共享 composition root 和 fullscreen dock。
-4. 读 [`interactive-mode.ts`](../../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 `handleEvent()`，确认正式路径怎样把 Agent 事件变成组件状态。
+4. 读 [`interactive-mode.ts`](../../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 `handleEvent()` 与 status 安装/重绑方法，再读 [`status-indicator.ts`](../../packages/coding-agent/src/modes/interactive/components/status-indicator.ts)，确认正式路径怎样把 Agent 事件变成组件状态。

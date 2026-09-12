@@ -29,7 +29,7 @@ context（上下文）是下一次请求实际交给模型的 system prompt、�
 
 ## 3. 正式产品的 compaction 算法
 
-compaction（上下文压缩）把较早消息总结成摘要，并保留近期原始消息。默认设置预留 16,384 token 给提示和下一次模型输出，并尝试保留最近 20,000 token 的原始消息；用户设置可以覆盖这两个值。
+compaction（上下文压缩）把较早消息总结成摘要，并保留近期原始消息。默认设置预留 16,384 token 给提示和下一次模型输出，并尝试保留最近 20,000 token 的原始消息；用户可以设置普通值，也可以在 `compaction.modelOverrides` 中按精确、区分大小写的 `provider/modelId` 分别覆盖这两个预算。每个字段按“匹配模型的覆盖值 → 普通值 → 内建默认值”独立解析，`enabled` 仍是全局开关。
 
 ### 3.1 何时触发
 
@@ -72,6 +72,8 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 
 自动恢复最多尝试一次，防止“压缩—重试—再次溢出”无限循环。若 response 已成功结束但实际 context 已超限，只压缩供下一次使用，不重试已经完成的回答。
 
+手动压缩、阈值检查、overflow recovery 和扩展看到的 `preparation.settings` 使用同一组按当前模型解析后的预算。模型切换会影响下一次检查；已经开始的压缩继续使用启动时捕获的模型和设置。
+
 ### 3.5 扩展可以改变什么
 
 `session_before_compact` hook 可以取消本次压缩，或直接提供自定义 compaction result；默认算法只在扩展没有接管时运行。成功后发 `session_compact`，失败后发 `session_compact_failed`。这说明 compaction 是核心产品策略，但摘要内容仍是可替换的扩展点。
@@ -86,7 +88,7 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 2. 在 [`agent-session.ts`](../packages/coding-agent/src/core/agent-session.ts) 定位 `_checkCompaction()`：确认 manual、threshold 和 overflow 三种触发语义。
 3. [`compaction.ts`](../packages/coding-agent/src/core/compaction/compaction.ts) 的 `estimateContextTokens()`、`findCutPoint()` 和 `prepareCompaction()`：确认 token 估算与切分不变量。
 4. 继续读同一文件的 `compact()` 与 `completeSummarization()`：确认摘要请求、失败条件和结果结构。
-5. 回到同一个 `agent-session.ts` 定位 `_runAutoCompaction()`：确认 compaction entry 落盘、context 替换和 overflow 重试。
+5. 回到同一个 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 定位 `_runAutoCompaction()`：确认 compaction entry 落盘、context 替换和 overflow 重试。
 
 ## 4. Durable session 模型
 
@@ -125,9 +127,9 @@ Agent-core 的 compaction 模块会生成可写入 `compaction` entry 的 summar
 
 ### JSONL
 
-agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一个已提交 write。写入先追加磁盘再更新内存状态；Session mutation line 保证一个会话只有一条提交序列。
+agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一个完整 transaction。单 write 直接编码为对象，多 write 原子提交编码为数组，因此文件行边界同时也是事务边界。写入先追加磁盘再更新内存状态；Session mutation line 保证一个会话只有一条提交序列。
 
-恢复逻辑可以修复最后一行被截断或缺少换行的情况。fork 先写完整临时文件，再原子发布目标文件。
+恢复逻辑只重放完整换行终止的 transaction，并可移除被截断或缺少换行的尾部。JSONL fork 先捕获源的 sequence 边界，第一遍只索引 parent、当前 value/list 和 lane 元数据，第二遍把选中的 entry 与当前状态流式写入临时文件，再原子发布目标文件；它不会为大型会话先构造完整 payload snapshot，也不会切开源 transaction。
 
 ### 内存
 
@@ -143,7 +145,7 @@ agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一�
 
 1. 读 [`types.ts`](../packages/agent/src/harness/session/types.ts) 的 `Storage`、`Session` 与 `SessionRepo`，先确认原子写入、单会话和会话集合的边界。
 2. 读 [`values.ts`](../packages/agent/src/harness/session/values.ts) 与 [`session.ts`](../packages/agent/src/harness/session/session.ts)，确认 typed value/list、branch 和 mutation line 怎样组合底层 storage。
-3. 选择一个后端研究落盘策略：[`jsonl/repo.ts`](../packages/agent/src/harness/session/jsonl/repo.ts) 与 [`jsonl/storage.ts`](../packages/agent/src/harness/session/jsonl/storage.ts)，或 [`sqlite-node/src`](../packages/session-backends/sqlite-node/src)。
+3. 选择一个后端研究落盘策略：[`jsonl/repo.ts`](../packages/agent/src/harness/session/jsonl/repo.ts)、[`jsonl/storage.ts`](../packages/agent/src/harness/session/jsonl/storage.ts)、[`jsonl/io.ts`](../packages/agent/src/harness/session/jsonl/io.ts) 与 [`jsonl/fork.ts`](../packages/agent/src/harness/session/jsonl/fork.ts)，或 [`sqlite-node/src`](../packages/session-backends/sqlite-node/src)。
 4. 需要理解后端必须保持的共同语义时，再读 [`conformance/storage.ts`](../packages/agent/src/harness/session/testing/conformance/storage.ts) 与 [`conformance/session-repo.ts`](../packages/agent/src/harness/session/testing/conformance/session-repo.ts)。
 
 ## 8. 两个子系统不能混用名称
@@ -151,3 +153,23 @@ agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一�
 正式 CLI 的 `SessionManager` JSONL 不实现 durable `Storage`，也不是 `SessionRepo` 的一个后端。反过来，SQLite backend 也不会自动替换正式 CLI 的 JSONL。
 
 两边都有树、分支、上下文投影和摘要压缩，是因为它们解决相同类别的问题；这不代表它们已经接入同一运行时。当前正式 CLI/SDK 使用 `AgentSession` + `SessionManager`；实验性 client/server/session-worker 路径使用 `AgentHarness` + durable `Session`。两套 JSONL 格式和运行时仍然独立。
+
+## 9. 会话替换生命周期
+
+`AgentSession` 代表一个稳定会话；`AgentSessionRuntime` 代表“当前活动会话及其 cwd 绑定服务”。`/new`、resume、fork、clone 和 import 都属于后者。切换顺序是：
+
+1. 发出可取消的 `session_before_switch`/`session_before_fork`。
+2. abort 当前响应并等待工具结果等落盘。
+3. 发 `session_shutdown`。
+4. 同步解绑宿主 UI，dispose 旧 session。
+5. 按目标 cwd 创建 settings/model/resource 服务。
+6. 创建新 session 并替换 runtime 中的对象图。
+7. 宿主重新订阅、调用 `bindExtensions()`，并在这个绑定阶段发 `session_start`。
+
+这个顺序用于避免两类具体错误：旧扩展组件在新 session 中继续接收事件，以及跨 cwd 恢复时错误复用原目录的设置或资源。
+
+### 9.1 具体实现
+
+1. 读 [`agent-session-runtime.ts`](../packages/coding-agent/src/core/agent-session-runtime.ts) 的 switch、fork 和 new 操作，确认替换过程的总顺序。
+2. 接着看 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 的 `createReplacedSessionContext()`，确认新 cwd 下哪些依赖必须重建。
+3. 读 [`interactive-mode.ts`](../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 rebind 逻辑，确认 UI 怎样解绑旧 session、订阅新 session。

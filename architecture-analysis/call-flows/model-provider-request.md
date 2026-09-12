@@ -69,6 +69,8 @@ sequenceDiagram
 
 Provider 决定模型集合、认证、过滤、目录刷新和 stream 入口。API implementation 负责把统一 `Context` 转成 Anthropic/OpenAI/Google 等 wire protocol，并把厂商 SSE、WebSocket 或 JSON 事件还原为统一事件。
 
+某些跨 API 规则属于 provider wrapper，而不是单个 adapter：OpenCode/OpenCode Go 在分派前把 `sessionId` 加为 `x-opencode-session`；OpenRouter 通过 compat 让 OpenAI Completions 和 Anthropic Messages 都发送 `x-session-id`。显式传入的同名 header 优先，避免 wrapper 覆盖调用方决策。
+
 上层 loop 只接收 `start`、文本/thinking/tool-call delta、`done` 或 `error`，不理解厂商 payload。最终 assistant message 必须包含一致的 usage、stop reason、content block 和错误状态。
 
 ## 6. 失败和取消
@@ -94,4 +96,5 @@ Provider 决定模型集合、认证、过滤、目录刷新和 stream 入口。
 3. [`models.ts`](../../packages/ai/src/models.ts)：provider/auth 的通用解析和 stream 分派。
 4. [`types.ts`](../../packages/ai/src/types.ts)：Model、Provider 和统一事件契约。
 5. [`api/anthropic-messages.ts`](../../packages/ai/src/api/anthropic-messages.ts)：一个具体 API implementation 示例。
-6. [`agent-loop.ts`](../../packages/agent/src/agent-loop.ts)：统一 stream 如何还原成 Agent events。
+6. [`providers/opencode-headers.ts`](../../packages/ai/src/providers/opencode-headers.ts)：一个跨 API provider wrapper 示例。
+7. [`agent-loop.ts`](../../packages/agent/src/agent-loop.ts)：统一 stream 如何还原成 Agent events。

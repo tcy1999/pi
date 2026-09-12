@@ -49,6 +49,8 @@ sequenceDiagram
 
 renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根布局由 `createChatViewport()` 组合 transcript 和固定 dock。这两个 helper 也被实验性 client presentation 复用，但该路径从 Chord `Transcript` replica 更新组件，不订阅 `AgentSessionEvent`。
 
+工作、compaction、branch summary 和 retry 共用 `StatusIndicator`。支持边框嵌入的 editor 会显示活动 indicator；否则它位于 status container。renderer/editor 重建时，`InteractiveMode` 会让所有 indicator 重新选择位置，不只处理 working spinner。
+
 ## 3. 为什么 `requestRender()` 不立即输出
 
 模型 streaming 会在很短时间内产生大量 delta，工具和 footer 也可能同时失效。每次状态变化立即全量输出会造成闪烁、重复 ANSI 写入和 scrollback 破坏。
@@ -85,6 +87,7 @@ renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根�
 - `requestRender()` 只合并视觉刷新，不丢弃业务事件；组件状态仍按事件顺序更新。
 - terminal 尺寸、宽字符、图片行和 overlay 可能使文本索引不等于屏幕列，所有裁剪和光标定位必须使用 visible width。
 - TUI 停止后调度器不得继续写 terminal。
+- 异步树导航在改写 leaf、status 或 escape handler 前必须再次确认没有 compaction/其他导航启动；`AgentSession.navigateTree()` 提供第二层互斥检查。
 
 ## 7. 必须保持的不变量
 
@@ -100,5 +103,6 @@ renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根�
 2. [`agent-session.ts`](../../packages/coding-agent/src/core/agent-session.ts)：Agent event 到产品 event、extension 和持久化的顺序。
 3. [`tui.ts`](../../packages/tui/src/tui.ts)：input dispatch、`requestRender()`、render scheduling、overlay 和 cursor 处理。
 4. [`tui-renderer.ts`](../../packages/coding-agent/src/modes/interactive/tui-renderer.ts) 与 [`chat-viewport.ts`](../../packages/coding-agent/src/modes/interactive/chat-viewport.ts)：产品 renderer 配置和 fullscreen layout。
-5. [`editor.ts`](../../packages/tui/src/components/editor.ts)：focused editor 如何解释按键并触发提交。
-6. [`04-tui-rendering-architecture.md`](../package-docs/04-tui-rendering-architecture.md)：TUI 包内部渲染模型的补充说明。
+5. [`status-indicator.ts`](../../packages/coding-agent/src/modes/interactive/components/status-indicator.ts)：活动操作状态怎样在独立容器与 editor 边框间复用。
+6. [`editor.ts`](../../packages/tui/src/components/editor.ts)：focused editor 如何解释按键并触发提交。
+7. [`04-tui-rendering-architecture.md`](../package-docs/04-tui-rendering-architecture.md)：TUI 包内部渲染模型的补充说明。

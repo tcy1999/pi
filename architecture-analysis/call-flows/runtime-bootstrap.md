@@ -12,8 +12,9 @@ sequenceDiagram
   participant SM as createSessionManager()
   participant F as createRuntime factory
   participant SVC as createAgentSessionServices
-  participant RES as ResourceLoader
   participant MODEL as ModelRuntime
+  participant SET as SettingsManager
+  participant RES as ResourceLoader
   participant SDK as createAgentSession
   participant RT as AgentSessionRuntime
 
@@ -22,6 +23,9 @@ sequenceDiagram
   MAIN->>RT: createAgentSessionRuntime(factory, target)
   RT->>F: factory(cwd, sessionManager, start event)
   F->>SVC: cwd、agentDir、trust、资源选项
+  SVC->>MODEL: 创建或复用基础 ModelRuntime
+  SVC->>SET: 使用传入实例，缺省时按 cwd 创建
+  SVC->>RES: 用同一 settingsManager 创建 loader
   SVC->>RES: reload()
   RES-->>SVC: reload 完成
   SVC->>RES: getExtensions()
@@ -36,6 +40,8 @@ sequenceDiagram
   RT-->>MAIN: 当前活动 runtime
 ```
 
+基础 ModelRuntime 先准备内建 provider、凭据与模型配置；随后资源加载执行扩展，services 才注册扩展 provider 并刷新模型视图。CLI 通常在调用 services 前就准备了目标 cwd 的 SettingsManager，因此图中复用设置实例不代表此时才首次读取配置。ModelRuntime 的创建细节见[模型运行时](../03-model-and-auth-runtime.md#21-modelruntime-创建时怎样装配这些对象)，资源发现与信任见[资源与扩展](../04-resources-and-extensions.md)。
+
 ## 2. 为什么必须分成两阶段
 
 session 参数依赖 services 的加载结果，不能在 services 之前完整确定：
@@ -46,6 +52,28 @@ session 参数依赖 services 的加载结果，不能在 services 之前完整�
 - `SessionManager` 的历史决定是恢复原模型，还是选择新的默认模型。
 
 因此顺序必须是“确定目标 cwd → 创建 services → 解析 session options → 创建 session”。`createAgentSessionFromServices()` 本身只是受约束的装配器，它保证传给 `createAgentSession()` 的 cwd、settings、resources 和 model runtime 来自同一组已初始化依赖。
+
+### 2.1 SDK 默认入口与 CLI 的差异
+
+上图描述 CLI 的组装路径。SDK 的 `createAgentSession()` 与它采用相同的整体思路：确定 cwd、准备依赖、解析会话选项、构造会话，但 SDK 默认入口自行补齐依赖，不调用 `createAgentSessionServices()`。
+
+| 环节 | CLI | SDK 直接调用 `createAgentSession()` |
+|---|---|---|
+| 工作目录 | 先选择或创建会话，以会话的 cwd 创建运行时 | 按显式 `cwd`、传入的 `sessionManager.getCwd()`、`process.cwd()` 的优先级确定 |
+| 配置与资源 | 在 services 创建阶段准备，再注入会话工厂 | 使用传入的依赖；缺省时自行创建 settings、model runtime 和 resource loader |
+| 项目信任 | 由 CLI 决策，并传入设置实例及资源加载回调 | 不执行 CLI 的信任交互；默认 SettingsManager 的 `projectTrusted` 为 `true` |
+| 扩展 provider | services 在模型解析前处理待注册 provider，并刷新模型目录 | 默认入口加载资源后直接进入模型解析，没有执行 services 中的提前注册和刷新步骤 |
+| 会话存储目录 | 解析 CLI 参数、环境变量和 `settings.sessionDir` | 未传入 SessionManager 时使用 `getDefaultSessionDir(cwd, agentDir)` |
+
+CLI 最终通过 `createAgentSessionFromServices()` 调用同一个 `createAgentSession()`，复用模型恢复、thinking level 解析以及 `Agent`/`AgentSession` 构造。SDK 调用方也可以显式使用 services/runtime API。这里说明的是当前入口差异，并不表示两套依赖准备流程已经统一。
+
+### 2.2 为什么有两个 SettingsManager
+
+`startupSettingsManager` 与 `runtimeSettingsManager` 是同一类的两个实例。前者绑定启动 cwd，用于首次设置、启动界面、会话目录查询和信任提示；后者在目标会话 cwd 确定后创建，按项目的信任状态提供正式运行所需的配置。
+
+例如，在项目 A 执行 `pi --resume` 后选中项目 B 的历史会话：选择会话之前需要 A 的启动配置，选中之后必须按 B 的目录加载运行配置，不能直接沿用 A 的实例。首次设置发生在运行时依赖创建之前，使已保存的选择能被后续实例读取。
+
+这两个实例用于 CLI 的不同阶段，不是两个后台服务。SDK 默认入口已经能从参数或传入的 SessionManager 确定 cwd，因此没有这套启动实例与运行时实例的划分。
 
 ## 3. `AgentSessionServices` 的职责
 
@@ -78,7 +106,7 @@ services 创建不直接打印或退出。extension provider 注册错误、未�
 
 这种分层允许 SDK 选择不同错误策略，也避免基础设施函数依赖 CLI 输出。
 
-## 6. 必须保持的不变量
+## 6. CLI 运行时组装必须保持的不变量
 
 - `services.cwd` 必须等于 `sessionManager.getCwd()` 所代表的有效项目目录。
 - `AgentSession` 与 `ResourceLoader` 必须共享同一个 `SettingsManager`。

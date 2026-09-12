@@ -243,6 +243,8 @@ export class ModelRuntime implements Models {
 	}
 
 	private recomposeProvider(providerId: string): void {
+		// base 是完整实现：优先取 registerNativeProvider() 注册的对象，否则使用内建 provider。
+		// extension 则是 registerProvider() 注册的配置层，两者都针对同一个 provider ID。
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
 		if (!base && !this.config.getProvider(providerId) && !extension) {
@@ -257,6 +259,7 @@ export class ModelRuntime implements Models {
 			return;
 		}
 		try {
+			// 把 base、models.json 和 extension 组合成一个 Provider，再替换集合中的当前实现。
 			this.models.setProvider(composeModelProvider(providerId, base, this.config, extension));
 			this.compositionErrors.delete(providerId);
 		} catch (error) {

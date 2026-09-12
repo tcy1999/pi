@@ -53,11 +53,15 @@ pi-agent-core Agent / agent-loop
 
 自动压缩有三个触发语义：阈值、provider 返回 context overflow 后的恢复，以及手动请求。触发和 UI/重试编排由 `AgentSession` 负责，摘要算法位于 coding-agent 的 compaction 模块。
 
+`reserveTokens` 与 `keepRecentTokens` 可以在普通 compaction 设置中定义，也可以由 `modelOverrides` 按精确 `provider/modelId` 覆盖；两个字段独立回退到普通值和内建默认值。手动、阈值、overflow 与 extension preparation 使用同一组按活动模型解析的值，模型切换从下一次检查开始生效。
+
 ## 5. Branch summary 与 compaction 的区别
 
 compaction 缩短同一活动路径的模型上下文；branch summary 在树导航时，把离开分支的重要信息附加到目标分支。后者先找旧 leaf 与目标位置的共同祖先，只总结旧分支独有的区间。
 
 两者使用相似的结构化摘要与文件操作累计信息，但产生原因和落点不同：compaction 是上下文容量管理，branch summary 是跨分支信息转移。
+
+compaction 与树导航共享互斥状态。`navigateTree()` 在已有压缩或导航运行时直接拒绝，UI 在异步摘要选择对话框返回后也会再次检查，避免旧操作覆盖新操作的 leaf、status indicator 或 escape handler。
 
 ## 6. 与 agent-core durable session 的区别
 

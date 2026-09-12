@@ -12,7 +12,6 @@ flowchart LR
   AGENT --> LOOP["pi-agent-core\nagent-loop"]
   LOOP --> MODEL["pi-coding-agent\nModelRuntime"]
   MODEL --> AI["pi-ai\nProvider / API implementation"]
-  AI --> PROVIDER["Anthropic / OpenAI / Google / ..."]
   LOOP --> TOOLS["pi-coding-agent\nread / bash / edit / write / ..."]
   TOOLS --> LOOP
 
@@ -80,6 +79,8 @@ flowchart TB
   SQLITE --> AI
 ```
 
+> **术语说明：Chord** 是模块协作与状态同步框架。**facet** 是有启动、销毁等生命周期的功能模块；**service** 是模块向外提供的能力接口；**replicated state** 是调用方持有的状态同步副本；**Delta** 是描述状态变化的增量。例如，远程界面通过 `AgentController` 控制 Agent，再订阅 `Transcript` 的会话状态：先取得完整快照，随后接收增量更新并刷新显示。Chord 负责服务调用与状态同步的语义，protocol/client/server 负责跨进程路由和传输。Chord 也可用于同一进程内的模块组合。详见 [Chord 架构专题](./package-docs/09-chord-facets-services-and-delta.md)。
+
 | 包 | 提供什么 | 不提供什么 |
 |---|---|---|
 | `pi-coding-agent` | 完整编码 Agent 的 CLI、进程内 SDK、配置、工具、扩展、会话和 UI 编排 | 不实现供应商协议或通用终端渲染 |
@@ -103,7 +104,7 @@ flowchart TB
 | 当前入口 | 正式 CLI、进程内 SDK、print/JSON/RPC | 自定义宿主；coding-agent 实验性 server/session worker/client |
 | 会话 | `SessionManager` 产品 JSONL | durable `Session` + `SessionRepo`/`Storage` |
 | 压缩 | `packages/coding-agent/src/core/compaction/` | `packages/agent/src/harness/compaction/` |
-| 能力状态 | 配置、旧 extension、完整命令和 TUI 生命周期均已接入 | run/恢复、compaction、navigation、队列、lane watch 和工具 durable checkpoint 已实现；session 级 `watchSession()` 仍是唯一公开 stub |
+| 能力状态 | 配置、旧 extension、完整命令和 TUI 生命周期均已接入 | run/恢复、compaction、navigation、队列、lane watch 和工具 durable checkpoint 已实现；`watchSession()` 目前只有接口，尚不能订阅整个会话的状态变化 |
 | 默认正式 CLI 是否使用 | 是 | 否；仅实验入口使用 |
 
 Harness 将一次 run/compaction/navigation 表示为 durable operation。`AgentLane.accept()` 原子接纳操作，`drive()` 解释持久状态并执行下一步；模型帧、工具参数/输出、retry wait 和 terminal result 都在明确 checkpoint 落盘。进程中断后 `resume()` 从 operation state 继续，而不是从聊天文本猜测进度。它仍不承诺 exactly-once：不可安全重放的外部工具在不确定窗口内会合成 interrupted result。
@@ -112,11 +113,28 @@ Harness 将一次 run/compaction/navigation 表示为 durable operation。`Agent
 
 ### 3.1 具体实现
 
-想确认两者的区别，可以分别看[正式运行时怎样启动](./02-runtime-and-request-flow.md#11-具体实现)，以及 [`AgentSession` 与 `AgentHarness` 的实现对比](./03-agent-core.md#31-具体实现)。
+想确认两者的区别，可以分别看[正式运行时怎样启动](./02-runtime-bootstrap.md#11-具体实现)，以及 [`AgentSession` 与 `AgentHarness` 的实现对比](./05-agent-session-and-execution.md#41-具体实现)。
 
 ## 4. 跨进程组件是什么
 
-protocol/client/server 不是另一种 Agent，也不是远程桌面。它们是一套让 UI 或宿主通过进程边界控制“某个会话运行时”的基础设施：
+跨进程组件让界面或其他应用能够调用另一个进程中的 Agent，并持续接收会话状态更新。可以按三层理解：**pi-protocol 定义通信外壳，Chord 定义服务与状态同步机制，coding-agent 定义具体业务服务。**
+
+| 层 | 解决的问题 | 具体职责 |
+|---|---|---|
+| `pi-protocol` | client 和 server 之间的消息怎么包装？ | 定义请求编号、目标会话、请求／响应类型等外层消息格式，以及编码和分帧 |
+| Chord | 模块怎样提供服务，调用方怎样获得状态变化？ | 定义模块如何暴露服务、服务如何被发现和调用，以及状态快照和增量更新的订阅机制 |
+| coding-agent | 提供哪些 Agent 业务能力？ | 定义 `AgentController`、`Transcript`、`Models` 等具体服务，并在实验性会话 worker 中接入 `AgentHarness` |
+
+`pi-client` 和 `pi-server` 负责连接与路由，将消息送到正确的会话 worker，并把响应和状态更新送回调用方。coding-agent 则通过多个功能模块提供服务：例如 `AgentController` 提供控制能力，`Transcript` 提供会话内容，`Models` 提供模型相关能力。
+
+以“界面发消息给 Agent，然后显示回答”为例：
+
+1. 界面调用 coding-agent 定义的 `AgentController` 服务。
+2. Chord 将操作表示为服务调用，`pi-protocol` 定义承载这个调用的外层消息格式；client/server 将消息送到对应 worker。
+3. worker 中的服务实现操作 `AgentHarness`，Agent 开始运行，会话内容随之变化。
+4. 界面通过 Chord 订阅 `Transcript` 状态，先取得完整快照，随后接收增量更新并刷新显示。这些更新同样经过 protocol/client/server 传回界面。
+
+下图展示这些组件的连接关系：
 
 ```mermaid
 flowchart LR
@@ -133,7 +151,7 @@ flowchart LR
 
 `pi-protocol` 只理解 hello、request/response/cancel、service update 和 attachment change 等外层 envelope。payload 中的 service catalogue、调用、订阅 snapshot/update 与错误码由 Chord 定义；具体 `SessionDirectory`、`AgentController`、`Transcript` 和 `Models` 则由 coding-agent 的实验性 facets 定义。
 
-coding-agent 已提供实验性 server、client、coordinator 和每会话 worker：server 负责路由，worker 持有 durable `Session`、`AgentHarness` 和 session facets，presentation 通过 Chord replicated state 获得 transcript。它仍不属于默认 CLI/SDK 稳定路径。若应用和 Agent 在同一进程且生命周期一致，直接使用正式 SDK 更简单。详细协议见[跨进程协议与工程治理](./07-remote-protocol-and-engineering.md)。
+coding-agent 已提供实验性 server、client、coordinator 和每会话 worker：server 负责路由，worker 持有 durable `Session`、`AgentHarness` 和 session facets，presentation 通过 Chord replicated state 获得 transcript。它仍不属于默认 CLI/SDK 稳定路径。若应用和 Agent 在同一进程且生命周期一致，直接使用正式 SDK 更简单。详细协议见[跨进程协议与工程治理](./08-remote-protocol-and-engineering.md)。
 
 ### CBOR 是什么
 
@@ -152,7 +170,7 @@ CBOR 只负责值与字节之间的转换；`pi-protocol` 定义路由和关联�
 
 ### 4.1 具体实现
 
-如果你关心远程宿主或进程间通信，可以接着看[跨进程协议的具体实现](./07-remote-protocol-and-engineering.md#51-具体实现)。
+如果你关心远程宿主或进程间通信，可以接着看[跨进程协议的具体实现](./08-remote-protocol-and-engineering.md#51-具体实现)。
 
 ## 5. 当前实现体现的设计原则
 
@@ -182,4 +200,4 @@ Chord 决定 facet 怎样组合、service 怎样被发现和替换、状态怎�
 
 ### 5.7 具体实现
 
-想从源码确认这些原则，可以分别看 [Agent loop](./03-agent-core.md#25-具体实现)、[上下文压缩](./04-session-and-persistence.md#36-具体实现)、[Extension 的产品取舍](./06-extension-resource-tui.md#81-具体实现)、[供应商流适配](./05-ai-provider-layer.md#31-具体实现)和 [Chord 架构专题](./package-docs/09-chord-facets-services-and-delta.md)。
+想从源码确认这些原则，可以分别看 [Agent loop](./05-agent-session-and-execution.md#35-具体实现)、[上下文压缩](./06-session-and-persistence.md#36-具体实现)、[Extension 的产品取舍](./04-resources-and-extensions.md#51-具体实现)、[供应商流适配](./03-model-and-auth-runtime.md#31-具体实现)和 [Chord 架构专题](./package-docs/09-chord-facets-services-and-delta.md)。

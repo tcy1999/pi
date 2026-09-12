@@ -59,6 +59,8 @@ sequenceDiagram
 
 这层负责产品语义；agent-core 不认识 slash command、skill、项目设置或 session JSONL。
 
+直接调用异步 `steer()`/`followUp()` 也会进入 `_queueUserInput()`：先拒绝 extension command，经过同一 `input` hook，保留调用方的 `source`，再展开 skill/template 并进入核心队列。RPC 因而能把 queued input 标为 `rpc`，扩展也不会因为宿主绕过 `prompt()` 而漏掉输入事件。
+
 ## 3. `Agent`：单 active run 与配置快照
 
 `Agent.prompt()` 拒绝并行启动第二个 active run，然后创建 context/config 快照并进入 `runWithLifecycle()`。该生命周期创建 `AbortController`，设置 streaming 状态，捕获未转成模型事件的异常，并在 finally 中结束 active run。
@@ -103,7 +105,7 @@ sequenceDiagram
 
 ## 8. 源码入口
 
-1. [`agent-session.ts`](../../packages/coding-agent/src/core/agent-session.ts)：`prompt()`、`_handleAgentEvent()`、retry 和 compaction 接入。
+1. [`agent-session.ts`](../../packages/coding-agent/src/core/agent-session.ts)：`prompt()`、`_runInputHandlers()`、`_queueUserInput()`、`_handleAgentEvent()`、retry 和 compaction 接入。
 2. [`agent.ts`](../../packages/agent/src/agent.ts)：`prompt()`、`runWithLifecycle()` 和 loop config。
 3. [`agent-loop.ts`](../../packages/agent/src/agent-loop.ts)：`runLoop()`、`streamAssistantResponse()` 和工具执行。
 4. [`sdk.ts`](../../packages/coding-agent/src/core/sdk.ts)：把 `ModelRuntime.streamSimple()` 和产品 hooks 注入 `Agent`。

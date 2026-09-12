@@ -1,6 +1,6 @@
 # Pi 项目架构分析
 
-本文档集基于 `main` 分支提交 `9767ba275`（2026-09-06）进行静态分析。分析对象包括源码、包清单、项目文档、测试入口、CI 和发布脚本；关键结论均回溯到当前源码。
+本文档集基于 `main` 分支提交 `196aff41c`（2026-09-12）进行静态分析。分析对象包括源码、包清单、项目文档、测试入口、CI 和发布脚本；关键结论均回溯到当前源码。
 
 ## 核心名词
 
@@ -17,19 +17,20 @@
 每章的“具体实现”都会说明先看哪个文件、重点看哪些方法。同一个核心文件再次出现时，只会指出新的相关方法。
 
 1. [架构总览](./01-architecture-overview.md)：正式产品路径、包边界，以及未接入正式入口的组件。
-2. [启动与请求时序](./02-runtime-and-request-flow.md)：一次本地请求怎样经过 UI、会话、模型和工具。
-3. [Agent 内核与工具循环](./03-agent-core.md)：循环条件、工具并发、队列插入、事件顺序，以及 `AgentSession` 与 `AgentHarness` 的区别。
-4. [会话、上下文压缩与持久化](./04-session-and-persistence.md)：上下文怎样从历史生成，压缩怎样触发、切分、总结和恢复。
-5. [模型、供应商与缓存](./05-ai-provider-layer.md)：统一模型接口、流协议、鉴权、prompt cache 和模型目录缓存。
-6. [扩展系统、资源加载与 TUI](./06-extension-resource-tui.md)：扩展为何是产品组合边界、生命周期、信任边界和终端渲染。
-7. [跨进程协议与工程治理](./07-remote-protocol-and-engineering.md)：Chord service、protocol/client/server、实验性 session worker、测试架构、供应链和发布。
-8. [Agent 工程实践](./08-agent-engineering-practices.md)：evaluation、安全、失败恢复、并发、可观测性和成本控制，以及当前实现的边界。
-9. [Package 架构专题](./package-docs/README.md)：从各 package 的 docs 中抽取的中文架构说明，不包含安装和使用教程。
-10. [核心调用链](./call-flows/README.md)：按运行流程追踪跨 package 的真实调用顺序、对象生命周期、重建边界和失败路径。
+2. [启动与运行时装配](./02-runtime-bootstrap.md)：确定会话与 cwd，准备 services，再创建会话并交给 mode。
+3. [模型、认证与供应商运行时](./03-model-and-auth-runtime.md)：ModelRuntime 创建、凭据与登录、provider 组合、流式协议、代理和缓存。
+4. [资源加载与扩展](./04-resources-and-extensions.md)：设置与信任如何影响资源发现，扩展如何补齐 provider、工具和提示定义。
+5. [AgentSession 与 Agent 执行](./05-agent-session-and-execution.md)：输入预处理、请求与事件时序、模型—工具循环、工具并发、停止与预算边界。
+6. [会话、上下文压缩与持久化](./06-session-and-persistence.md)：历史如何生成上下文，压缩与恢复如何工作，会话替换如何重建依赖。
+7. [TUI 与交互](./07-tui-and-interaction.md)：会话事件如何成为终端组件，以及差量渲染、焦点、overlay 和 footer。
+8. [跨进程协议与工程实践](./08-remote-protocol-and-engineering.md)：实验性远程路径、测试与发布、行为评测、安全、失败重试、取消、并发和可观测性。
 
-第 9 项适合按 package 查问题，与前八章内容有重合；沿主线学习时看到第 8 章即可。
+主线按“启动总图 → 准备模型依赖 → 加载资源与扩展 → 执行请求 → 保存与恢复 → 呈现结果”展开。它是阅读依赖顺序：模型章会连同流协议、认证和缓存一起解释 provider 层，不表示模型请求在创建 Agent 之前已经发生。最后一章补充跨进程运行与整体工程取舍。
 
-第 10 项不按 package 切断流程。每篇文档会标出主负责 package 和跨包边界，适合从入口函数一路跟到最终副作用。
+按需查阅的两组专题不计入主线编号：
+
+- [Package 架构专题](./package-docs/README.md)：按 package 查组件与设计边界，与主线有内容重合。
+- [核心调用链](./call-flows/README.md)：逐函数追踪跨 package 的调用顺序、对象生命周期、重建边界和失败路径。
 
 ## 一句话结论
 

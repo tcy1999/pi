@@ -8,8 +8,8 @@
 
 当前架构来源覆盖：
 
-- `packages/agent/docs/`：Harness 规范、assistant/tool durability、session values、telemetry、plugin/facet 设计和实施 work packages。
-- `packages/coding-agent/docs/`：SDK、session format、compaction、extensions、TUI、RPC、安全和大量使用文档。
+- `packages/agent/docs/`：当前 Harness 规范、assistant/tool durability、session values、telemetry、plugin/facet 设计和实施 work packages，以及尚未进入源码的 pico 下一代设计文档。
+- `packages/coding-agent/docs/`：文档站按 Start here、Customization、Reference、Programmatic Usage、Platform Setup、Development 六组导航；本目录从其中的 SDK、session format、compaction、extensions、TUI、RPC、安全、模型/provider 和设置文档抽取架构事实。
 - `packages/chord/README.md` 与 `packages/chord/src/delta/README.md`：facet、service、replicated state、Delta 和 bundle/reload 边界。
 
 ## 专题
@@ -32,6 +32,7 @@
 |---|---|
 | `agent/docs/harness.md`、`assistant-durability.md`、`tool-durability.md`、`values.md` | 提取 durable operation、effect checkpoint、typed value/list 和当前完成度，见专题 1、6 |
 | `agent/docs/work-packages/`、`runtime-simplification.md`、`post-wp05-roadmap.md` | 用于校验实施决策；已落地部分并入专题 1，未实现计划不写成当前事实 |
+| `agent/docs/pico-v3.md`、`pico2.md`、`agent/docs/pico/` | 下一代 pico reference design、使用面草案、handoff 与 implementation plan；当前 `packages/agent/src/` 尚无 pico runtime，不写成现有能力 |
 | `agent/docs/plugins.md`、`mobile-handoff/` | 提取 facet/service、状态复制和跨进程边界；模式示例不写成内建能力，见专题 1、9 |
 | `agent/src/search/index.ts` | 原 `agent/docs/search.md` 与具体实现已移除；当前仅保留 draft service interface，见专题 6 |
 | `agent/docs/telemetry-schema.md` | 提取 span 层次和内容边界，不复制生成字段表，见专题 6 |
@@ -48,7 +49,7 @@
 | `coding-agent/docs/models.md` | 提取模型/provider 配置的组合位置；字段与示例不收录，见专题 7 |
 | `coding-agent/docs/custom-provider.md` | 提取 provider 注册、认证和 stream contract；实现教程不收录，见专题 7 |
 | `coding-agent/docs/providers.md` | 提取 provider catalog 与 credential 解析边界；登录步骤和云配置不收录，见专题 7 |
-| `coding-agent/docs/settings.md` | 提取 global/project merge、trust gate 和资源设置，见专题 8 |
+| `coding-agent/docs/settings.md` | 提取 global/project merge、trust gate、资源设置和按模型解析 compaction 预算，见专题 2、8 |
 | `coding-agent/docs/usage.md` | 提取 mode、消息队列、context file 和 trust 的架构信息，已并入专题 2、3、5、8；CLI 表不收录 |
 | `coding-agent/docs/index.md` | 导航页，无独立架构内容 |
 | `coding-agent/docs/quickstart.md` | 安装、认证和首次使用教程，不收录 |
@@ -67,7 +68,7 @@
 | `coding-agent/docs/development.md` | 开发环境、测试和 rebrand 指南；包地图信息已由总览源码核对，不单独翻译 |
 | `chord/README.md`、`chord/src/delta/README.md` | 提取 facet lifecycle、service、replicated state、Delta 和 bundle/reload，见专题 9 |
 
-`docs.json` 是文档站配置，`docs/images/` 是图片资源，不属于架构来源。
+`docs.json` 是文档站导航与 redirect 的权威清单；静态测试会检查导航路径、Markdown 链接和孤儿页。它不提供运行时架构事实。`docs/images/` 是图片资源，也不属于架构来源。
 
 ## 状态标记
 

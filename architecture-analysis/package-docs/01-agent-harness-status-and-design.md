@@ -74,7 +74,7 @@ flowchart LR
 
 JSONL、内存和 SQLite 用途不同，但共享 `Storage` 与 `SessionRepo` 语义。`createStorageConformance()` 固定原子写入、sequence、value/list、usage 和 branch scan；`createSessionRepoConformance()` 固定生命周期、所有权、消息与 fork 行为。
 
-JSONL v4 采用 header + committed writes；尾行损坏可修复，fork 通过临时文件原子发布。SQLite 将同一逻辑映射为事务表。规范中的 JSONL snapshot compaction 尚未实现，因此逻辑删除不会立即回收历史 write 的物理字节。
+JSONL v4 采用 header + committed transaction lines：单 write 是对象，多 write commit 是数组。尾行损坏可修复；fork 在捕获的 sequence 边界内先索引结构与当前状态，再流式复制选中的 payload 到临时文件并原子发布，因此不会拆分事务，也不必把大 session 全部载入内存。SQLite 将同一逻辑映射为事务表。规范中的 JSONL snapshot compaction 尚未实现，因此逻辑删除不会立即回收历史 write 的物理字节。
 
 ## 7. Lane 的运行语义
 
@@ -93,5 +93,5 @@ lane 不是另一份 session。它是在共享会话树上拥有独立 branch ti
 1. 读 [`agent-harness.ts`](../../packages/agent/src/harness/agent-harness.ts)，确认公开 `AgentHarness`、`AgentLane`、snapshot、event 和 hook 契约。
 2. 读 [`runtime/harness.ts`](../../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../../packages/agent/src/harness/runtime/lane.ts)，确认 lane 生命周期、admission、drive、恢复和 watch。
 3. 读 [`runtime/drive/`](../../packages/agent/src/harness/runtime/drive)，按 assistant、tools、checkpoint、recovery 和 terminal 拆分理解状态推进。
-4. 读 [`session/types.ts`](../../packages/agent/src/harness/session/types.ts)、[`session/values.ts`](../../packages/agent/src/harness/session/values.ts) 与 [`session/session.ts`](../../packages/agent/src/harness/session/session.ts)，确认存储和 mutation line。
+4. 读 [`session/types.ts`](../../packages/agent/src/harness/session/types.ts)、[`session/values.ts`](../../packages/agent/src/harness/session/values.ts) 与 [`session/session.ts`](../../packages/agent/src/harness/session/session.ts)，确认存储和 mutation line；JSONL 事务与流式 fork 分别见 [`jsonl/io.ts`](../../packages/agent/src/harness/session/jsonl/io.ts) 和 [`jsonl/fork.ts`](../../packages/agent/src/harness/session/jsonl/fork.ts)。
 5. 最后读 [`harness.md`](../../packages/agent/docs/harness.md) 的 0.9 节，区分已实现机制与剩余切片。

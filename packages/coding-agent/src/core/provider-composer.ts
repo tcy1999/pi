@@ -221,8 +221,11 @@ function applyExtension(
 ): Model<Api>[] {
 	if (!config) return [...models];
 	if (!config.models) {
+		// 未提供 models 时保留已有列表；仅提供 baseUrl 就只改这些模型的请求地址。
 		return config.baseUrl ? models.map((model) => ({ ...model, baseUrl: config.baseUrl! })) : [...models];
 	}
+	// 提供 models 时替换整个列表，不是按 ID 追加；空数组也表示清空列表。
+	// 之前的模型只用于查找 api/baseUrl 默认值，不会自动保留在返回列表中。
 	return config.models.map((definition) => {
 		const defaults = findModelDefaults(models, definition.id, definition.api ?? config.api);
 		const api = definition.api ?? config.api ?? defaults?.api;
@@ -425,7 +428,12 @@ export function validateExtensionProvider(
 	applyExtension(providerId, applyModelsJson(providerId, base?.getModels() ?? [], modelsConfig), extension);
 }
 
-/** Compose built-in, models.json, and extension layers without reading credentials. */
+/**
+ * 为同一个 provider ID 组合基础实现、models.json 和扩展配置，返回最终 Provider。
+ * base 是完整的 Provider；extension 是 registerProvider() 提交的可选配置层。
+ * 此处装配模型目录、认证方法和请求函数，不读取凭据，也不发起登录或模型请求。
+ * 各字段有各自的组合规则，不能把整个对象理解为“后加载者覆盖前者”。
+ */
 export function composeModelProvider(
 	providerId: string,
 	base: Provider | undefined,
@@ -437,8 +445,9 @@ export function composeModelProvider(
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
-	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
+	// 模型列表从内到外处理：base → models.json 新增/替换 → extension → OAuth 调整 → modelOverrides。
+	// 例如 base=[A,B]，JSON 新增 C，extension.models=[B,D]，最终只保留 B、D；
+	// 最后的 modelOverrides 只修改仍在列表中的模型，不会把被移除的 A、C 加回来。
 	const getModels = () => {
 		let models = applyExtension(
 			providerId,
@@ -448,6 +457,7 @@ export function composeModelProvider(
 		if (extensionOAuthCredential && extension?.oauth?.modifyModels) {
 			models = extension.oauth.modifyModels(models, extensionOAuthCredential);
 		}
+		// 用户的逐模型属性覆盖最后应用一次，优先于扩展和 OAuth 对这些属性的修改。
 		return models.map((model) => {
 			const override = config?.modelOverrides?.[model.id];
 			return override ? applyModelOverride(model, override) : model;
@@ -467,6 +477,8 @@ export function composeModelProvider(
 		simple: boolean,
 	): AssistantMessageEventStream =>
 		lazyStream(model, async () => {
+			// 这里是选择一个请求实现，不是依次请求多个 provider：
+			// 扩展函数且 API 匹配 → 支持该 API 的 base → 通用 API 适配器。
 			if (extension?.streamSimple && model.api === extension.api) {
 				return extension.streamSimple(model, context, options as SimpleStreamOptions);
 			}
@@ -485,6 +497,7 @@ export function composeModelProvider(
 	const provider: Provider = {
 		id: providerId,
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
+		// provider 级默认地址优先级：扩展 > models.json > base；模型自身地址由 getModels() 组合。
 		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
@@ -492,6 +505,7 @@ export function composeModelProvider(
 		refreshModels:
 			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
 				? async (context) => {
+						// 目录刷新按 base → extension 执行；扩展刷新结果仍遵循整表替换规则。
 						await base?.refreshModels?.(context);
 						let refreshed: NonNullable<ProviderConfigInput["models"]> | undefined;
 						if (extension?.refreshModels) refreshed = await extension.refreshModels(context);

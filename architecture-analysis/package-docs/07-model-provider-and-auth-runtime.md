@@ -51,9 +51,11 @@ provider/model header 和 API key 可以引用环境变量或命令。目录展�
 
 这也是自定义 provider 最重要的边界：它不是只返回最终字符串，而必须维护 partial `AssistantMessage`、content index、usage、stop reason 和唯一终态。具体怎样注册和实现属于原始教程，不在本架构文档重复。
 
+供应商级包装可以横跨多种 API implementation。OpenCode/OpenCode Go 把 `sessionId` 统一映射为 `x-opencode-session`；OpenRouter 的兼容元数据则让 Chat Completions 与 Anthropic Messages 使用 `x-session-id`。同理，Fireworks Messages 通过模型兼容元数据声明 deferred tool reference 与 adaptive thinking，而不是让 `Agent` 按 provider 名称分支。
+
 ## 7. 具体实现
 
 1. 读 [`types.ts`](../../packages/ai/src/types.ts) 与 [`models.ts`](../../packages/ai/src/models.ts)，确认公共模型、provider 和认证接口。
-2. 选择 [`providers/anthropic.ts`](../../packages/ai/src/providers/anthropic.ts)，再进入 [`api/anthropic-messages.ts`](../../packages/ai/src/api/anthropic-messages.ts)，确认 provider 组合与网络协议适配的分界。
+2. 选择 [`providers/anthropic.ts`](../../packages/ai/src/providers/anthropic.ts)，再进入 [`api/anthropic-messages.ts`](../../packages/ai/src/api/anthropic-messages.ts)，确认 provider 组合与网络协议适配的分界；跨 API provider wrapper 可对照 [`providers/opencode-headers.ts`](../../packages/ai/src/providers/opencode-headers.ts)。
 3. 读 [`model-runtime.ts`](../../packages/coding-agent/src/core/model-runtime.ts) 与 [`provider-composer.ts`](../../packages/coding-agent/src/core/provider-composer.ts)，确认产品怎样合并内建、配置和 extension provider。
 4. 读 [`auth-storage.ts`](../../packages/coding-agent/src/core/auth-storage.ts)，确认 coding-agent 怎样实现凭据存储边界。

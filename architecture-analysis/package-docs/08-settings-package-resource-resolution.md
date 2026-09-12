@@ -21,9 +21,49 @@ flowchart LR
 
 ## 2. 全局与项目设置先经过信任边界
 
-全局 settings 对所有项目生效。项目 `.pi/settings.json` 只有在当前 cwd 被信任后才参与合并；未信任时不是“读取后忽略危险字段”，而是整个项目设置与受保护项目资源不进入有效配置。嵌套配置通常深度合并，但资源数组和少数产品字段有各自覆盖规则，不能假设所有数组都会拼接。
+全局 settings 对所有项目生效。CLI 正式运行时按当前 cwd 的信任状态加载项目 `.pi/settings.json`；`SettingsManager` 收到 `projectTrusted: false` 时跳过整个项目设置文件，资源加载器也按信任状态限制受保护项目资源。嵌套配置通常深度合并，但资源数组和少数产品字段有各自覆盖规则，不能假设所有数组都会拼接。
+
+这个信任决策由调用方提供，`SettingsManager` 本身不询问信任，省略 `projectTrusted` 时默认值为 `true`。CLI 的 `startupSettingsManager` 默认读取启动目录配置，用于首次设置、启动界面和会话选择；目标 cwd 确定后，再创建带信任状态的 `runtimeSettingsManager`。SDK 默认入口也不会自动执行 CLI 的信任流程。两阶段配置与入口差异见[启动调用链](../call-flows/runtime-bootstrap.md#21-sdk-默认入口与-cli-的差异)。
+
+深度合并发生在派生值解析之前。具体例子是 `compaction.modelOverrides`：全局与项目对象先递归合并，再以精确、区分大小写的 `provider/modelId` 查找。`reserveTokens` 与 `keepRecentTokens` 各自按“模型覆盖 → 普通设置 → 内建默认值”回退；全局的模型专用值会胜过项目的普通 fallback，项目若要改变它必须覆盖同一模型项。
 
 交互模式可以向用户询问信任；print、JSON 和 RPC 等非交互模式不能弹窗，只能依据已保存决定、全局 fallback 或本次显式 override。trust 控制是否加载项目输入，不限制加载后的代码权限。扩展一旦执行，仍拥有宿主进程权限。
+
+### 2.1 SettingsManager 先看三份状态，再看一条写入链
+
+这个类较长，一部分是配置字段多，另一部分是它需要区分“从哪里读取”“当前读到什么”和“写回哪里”。先理解下面几份状态，再按需查 getter/setter，不必从头逐个读字段。
+
+| 状态 | 用途 |
+|---|---|
+| `globalSettings` | 全局配置的内存副本，普通 setter 修改这里 |
+| `projectSettings` | 项目配置的内存副本，`setProject*` 修改这里；项目不可信时不加载 |
+| `settings` | 前两者合并后的读取视图，大多数 getter 从这里取值，再补默认值 |
+| `modifiedFields` / `modifiedNestedFields` | 记录需要写回的全局字段或直接子字段；项目侧有对应的两份记录 |
+| `writeQueue` | 串行执行待写入任务；`flush()` 等待队列完成 |
+
+例如，全局 `compaction` 是 `{ enabled: true, reserveTokens: 16384 }`，项目只设置 `{ reserveTokens: 8192 }`。调用 `setCompactionEnabled(false)` 后：
+
+```text
+setCompactionEnabled(false)
+  → 修改 globalSettings.compaction.enabled
+  → markModified("compaction", "enabled")：只标记这个子字段
+  → save()：立即重新合并，getter 读到 false 和 8192
+  → 保存当前配置及修改标记的快照，加入 writeQueue
+  → persistScopedSettings()：读取存储当前内容，只写回标记的字段
+```
+
+写回的是全局 `enabled: false`，项目的 `8192` 不会被复制进全局文件。保存时重新读取存储内容，是为了保留其他进程对未修改字段的更新；否则用启动时的整份副本覆盖文件，会丢掉别人刚改的 `reserveTokens`。这里的写入合并只按标记的字段或直接子字段进行，与读取时的递归深度合并不同。
+
+这也解释了一个容易困惑的现象：普通 setter 改的是全局值。如果项目显式设置了同一字段，随后 getter 仍返回项目值。
+
+### 2.2 阅读顺序与几个容易误判的边界
+
+建议先读 `fromStorageWithPaths()` → `loadFromStorage()` → `deepMergeSettings()`，了解加载与合并；再沿上面的 setter 链读到 `persistScopedSettings()`。其余 getter/setter 按具体配置查阅即可。`SettingsStorage` 负责原始 JSON 的读取与写回，回调返回 `undefined` 表示只读；文件实现处理锁和文件操作，内存实现供 SDK 与测试使用。
+
+- **临时覆盖不是独立保存的一层。** `applyOverrides()` 只改当前 `settings`，不写入两份来源配置。后续 setter 保存、`reload()` 或信任状态变化重新合并时，覆盖会消失；调用方若仍需要它，必须重新应用。
+- **内存生效与写入完成是两个时刻。** setter 返回时读取视图已更新，写入任务仍可能排队。`flush()` 等待队列，但写入失败被收集到错误列表，调用方还需用 `drainErrors()` 取出并清空这些错误。
+- **加载失败不会拿空配置覆盖坏文件。** 首次加载失败时该 scope 使用空配置；`reload()` 失败时保留该 scope 原有内存值。失败状态会阻止该 scope 的保存，直到成功重新加载。`reload()` 先等待已有写入，再读取配置。
+- **默认值主要在 getter 中补。** `getGlobalSettings()` / `getProjectSettings()` 返回来源配置的深拷贝，不是补全默认值后的有效配置。`getDefaultProjectTrust()` 则特意只读全局值，避免项目决定自身是否可信。
 
 ## 3. PackageManager 解决来源，ResourceLoader 解决内容
 
