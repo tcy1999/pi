@@ -1,0 +1,102 @@
+architecture-analysis/package-docs/04-tui-rendering-architecture.md
+  s_7f936f0fdba345::t_cb915de98d8c5e 35-36,58
+architecture-analysis/package-docs/02-coding-agent-runtime-session-compaction.md
+  s_7f936f0fdba345::t_cb915de98d8c5e 56-57,64
+architecture-analysis/call-flows/tui-event-rendering.md
+  s_7f936f0fdba345::t_acd33e781be622 52-53,90,106-108
+architecture-analysis/call-flows/README.md
+  s_c0269613595038::t_a2357dc72ae2f4 13-15,28,32
+architecture-analysis/package-docs/08-settings-package-resource-resolution.md
+  s_7f936f0fdba345::t_cb915de98d8c5e 28
+  s_914788afdac82f::t_487b09b8f63292 24-26
+  s_61ce7975471916::t_a632a93a22ec40 32-67
+architecture-analysis/02-runtime-bootstrap.md
+  s_c0269613595038::t_a2357dc72ae2f4 1,5,7-9,11,13,15,17-20,22,25,27,29,31-35,37,39,41,43,45,47,49-54,56,58,60,62,64-74,76,78,80,82
+architecture-analysis/01-architecture-overview.md
+  s_e2bfbed6eca08c::t_cec24c35562e05 82-83,107
+  s_c0269613595038::t_a2357dc72ae2f4 116,154,173,203
+  s_e2bfbed6eca08c::t_93725f1c449812 120-137
+architecture-analysis/package-docs/01-agent-harness-status-and-design.md
+  s_7f936f0fdba345::t_ae053c0f7138e0 77,96
+packages/coding-agent/src/core/model-runtime.ts
+  s_c0269613595038::t_8b6ec23a9154ab 246-247,262
+architecture-analysis/README.md
+  s_c0269613595038::t_a2357dc72ae2f4 20-33
+  s_7f936f0fdba345::t_8b45b203d0c001 3
+architecture-analysis/06-session-and-persistence.md
+  s_c0269613595038::t_a2357dc72ae2f4 32,75-76,91,130,132,148,156-175
+architecture-analysis/04-resources-and-extensions.md
+  s_c0269613595038::t_a2357dc72ae2f4 1,5-6,13,19,26,28,30-33,35,37,39,41,54,57-58
+architecture-analysis/call-flows/prompt-and-agent-loop.md
+  s_7f936f0fdba345::t_acd33e781be622 62-63,108
+architecture-analysis/package-docs/README.md
+  s_7f936f0fdba345::t_eeb47535784c91 11,35
+  s_7f936f0fdba345::t_ae053c0f7138e0 12,52,71
+architecture-analysis/07-tui-and-interaction.md
+  s_c0269613595038::t_a2357dc72ae2f4 1-40
+packages/coding-agent/src/core/provider-composer.ts
+  s_c0269613595038::t_8b6ec23a9154ab 224,227-228,431-436,448-450,460,480-481,500,508
+architecture-analysis/call-flows/model-provider-request.md
+  s_7f936f0fdba345::t_acd33e781be622 72-73,99-100
+architecture-analysis/call-flows/runtime-bootstrap.md
+  s_c0269613595038::t_a2357dc72ae2f4 16-17,26-28,43
+  s_914788afdac82f::t_487b09b8f63292 56-77,109
+architecture-analysis/08-remote-protocol-and-engineering.md
+  s_c0269613595038::t_a2357dc72ae2f4 1,3-100,102-116,124,127-128,133,154,156,158,160,163-167,169,173,179,187,191,194-195,199,203,213-239,241,243-274,282,284,286,296-298,300,302,305
+architecture-analysis/05-agent-session-and-execution.md
+  s_c0269613595038::t_a2357dc72ae2f4 1-3,7-132,138,164,178-182,184-190,192,194,196,198,200-202,208-209,212-224,230,237,266,268,273,287,290-292,294,305-311,315,317,319,323,325
+architecture-analysis/03-model-and-auth-runtime.md
+  s_c0269613595038::t_a2357dc72ae2f4 1,25-63,77-117,141-144,147-218,228,230,236-237,242-251,268-269,271
+architecture-analysis/package-docs/07-model-provider-and-auth-runtime.md
+  s_7f936f0fdba345::t_cb915de98d8c5e 54-55,59
+packages/coding-agent/src/main.ts
+  s_61ce7975471916::t_73f39d95ccaf4f 652,667,728-729
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.44-trip",
+  "base_commit_sha": "20c165b64a9eba431ef56b2d6e1dd337d2a09de3",
+  "prompts": {},
+  "sessions": {
+    "s_61ce7975471916": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0952d-043b-74d2-a4cf-3231272a0da5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_7f936f0fdba345": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0947a-b10c-7e73-9998-7c1226f605f5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_914788afdac82f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a094f9-4727-7a51-b1c7-1118e63d8ad4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_c0269613595038": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0953d-837a-7c43-ab37-0c5243390bd3",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_e2bfbed6eca08c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09490-ef97-78c2-abcf-83d34cc45e3a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    }
+  }
+}
