@@ -1,0 +1,113 @@
+packages/coding-agent/src/core/agent-session-runtime.ts
+  s_27f6db87e41e14::t_34c232e0436381 269,283,323-324,330-331,337-339,349,354-355
+  s_27f6db87e41e14::t_5c038edd6e6a73 304-307
+  s_27f6db87e41e14::t_691a8dafc40395 266-267,286-288
+architecture-analysis/call-flows/runtime-bootstrap.md
+  s_6e0aa6cce12881::t_f9801003586f39 7,43,54
+architecture-analysis/05-agent-session-and-execution.md
+  s_6e0aa6cce12881::t_f9801003586f39 5,92,94,98,244,266,273,292,299
+  s_6e0aa6cce12881::t_677c663af02d77 235,267
+architecture-analysis/package-docs/03-extension-resource-lifecycle.md
+  s_6e0aa6cce12881::t_f9801003586f39 5,7,30,62
+architecture-analysis/call-flows/session-replacement.md
+  s_6e0aa6cce12881::t_f9801003586f39 7,50,53
+architecture-analysis/04-resources-and-extensions.md
+  s_6e0aa6cce12881::t_f9801003586f39 11,57,72,103,108,114
+packages/coding-agent/src/core/session-manager.ts
+  s_27f6db87e41e14::t_4c561fa1606de9 1445,1453-1454,1464-1465,1511-1513
+  s_27f6db87e41e14::t_68807cd64c7b39 1450-1451,1496-1501
+  s_27f6db87e41e14::t_029889306137f5 1429-1434,1443-1444,1446-1449,1452
+  s_27f6db87e41e14::t_6af06e2fca0110 788,795,803,808-810
+architecture-analysis/call-flows/model-provider-request.md
+  s_6e0aa6cce12881::t_f9801003586f39 66,80
+architecture-analysis/package-docs/05-rpc-and-event-boundary.md
+  s_6e0aa6cce12881::t_f9801003586f39 25,43
+architecture-analysis/package-docs/08-settings-package-resource-resolution.md
+  s_6e0aa6cce12881::t_f9801003586f39 5,20,80
+architecture-analysis/package-docs/README.md
+  s_6e0aa6cce12881::t_f9801003586f39 17,22,29,33,37
+architecture-analysis/06-session-and-persistence.md
+  s_27f6db87e41e14::t_8b48df13e5e68f 16-42,45
+  s_6e0aa6cce12881::t_f9801003586f39 3,12,87,106,110,113,123,127,143,199
+  s_6e0aa6cce12881::t_677c663af02d77 147
+architecture-analysis/README.md
+  s_6e0aa6cce12881::t_f9801003586f39 3,10,35,41
+  s_6e0aa6cce12881::t_677c663af02d77 8
+architecture-analysis/package-docs/06-search-and-telemetry.md
+  s_6e0aa6cce12881::t_f9801003586f39 1,5,7,13,15,19,37,47
+  s_6e0aa6cce12881::t_677c663af02d77 3,9-11,51
+architecture-analysis/03-model-and-auth-runtime.md
+  s_6e0aa6cce12881::t_f9801003586f39 132,177,248
+  s_6e0aa6cce12881::t_677c663af02d77 17,268
+  s_054bb3bcac49cc::t_2c739801e96663 19,21,23-29
+  s_054bb3bcac49cc::t_64c7d39b3338a3 33,64-66
+architecture-analysis/package-docs/01-agent-harness-status-and-design.md
+  s_6e0aa6cce12881::t_f9801003586f39 1,5,7,15-16,21,25,27,58,87,97
+architecture-analysis/08-remote-protocol-and-engineering.md
+  s_6e0aa6cce12881::t_f9801003586f39 3,11,15,126,133,149,158,171,185,201,207,255,278,288,290,294,305,312,314
+  s_6e0aa6cce12881::t_ba3f08536aa6ff 10,17,43,45,57,61,63,65,87,131,211
+architecture-analysis/call-flows/tui-event-rendering.md
+  s_6e0aa6cce12881::t_f9801003586f39 9,56,70
+.pi/skills/technical-doc-writing/SKILL.md
+  s_a998cf8b28fe31::t_04ff24bb204c20 28-29,31-37
+  s_a998cf8b28fe31::t_bb18e4ae18479c 30
+architecture-analysis/07-tui-and-interaction.md
+  s_6e0aa6cce12881::t_677c663af02d77 11
+  s_6e0aa6cce12881::t_f9801003586f39 15,23,29,40
+architecture-analysis/call-flows/prompt-and-agent-loop.md
+  s_6e0aa6cce12881::t_f9801003586f39 60,76,94
+architecture-analysis/call-flows/resource-reload.md
+  s_6e0aa6cce12881::t_f9801003586f39 10,68
+architecture-analysis/package-docs/04-tui-rendering-architecture.md
+  s_6e0aa6cce12881::t_f9801003586f39 7,23,31,43,47,57
+architecture-analysis/package-docs/09-chord-facets-services-and-delta.md
+  s_6e0aa6cce12881::t_677c663af02d77 52
+  s_6e0aa6cce12881::t_f9801003586f39 3,21,42,44,54
+architecture-analysis/package-docs/07-model-provider-and-auth-runtime.md
+  s_6e0aa6cce12881::t_f9801003586f39 12,46,52
+architecture-analysis/call-flows/README.md
+  s_6e0aa6cce12881::t_f9801003586f39 15,20,28
+architecture-analysis/package-docs/02-coding-agent-runtime-session-compaction.md
+  s_6e0aa6cce12881::t_f9801003586f39 38,42,56
+  s_27f6db87e41e14::t_8b48df13e5e68f 26-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.44-trip",
+  "base_commit_sha": "a5e8aa272f525852f96f85c15b29c17f3bb6d1d1",
+  "prompts": {},
+  "sessions": {
+    "s_054bb3bcac49cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09a90-3dae-7c02-a911-f27aed2ae023",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_27f6db87e41e14": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09a41-7cdf-7d82-82c7-a39acb5e711d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_6e0aa6cce12881": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09a97-0982-7dd2-be4c-8e5997fb7651",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_a998cf8b28fe31": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0997a-60e0-7701-83f9-a554f7a97455",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    }
+  }
+}
