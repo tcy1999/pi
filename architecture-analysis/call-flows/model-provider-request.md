@@ -63,7 +63,7 @@ sequenceDiagram
 5. 将认证给出的 base URL 写入本次 request model。
 6. 调用 `provider.streamSimple()`。
 
-`lazyStream` 让上述异步准备发生在消费者真正迭代 stream 时，同时仍向上提供统一的 event stream/result 接口。
+`lazyStream()` 在调用时立即执行异步 `setup()`，并同步返回外层事件流。认证和模块加载不等待消费者开始迭代；产生的事件由外层流交付或排队，消费者通过异步迭代读取事件，通过 `result()` 获取最终消息。
 
 ## 5. Provider 与 API implementation 的边界
 
@@ -77,7 +77,7 @@ Provider 决定模型集合、认证、过滤、目录刷新和 stream 入口。
 
 - provider 不存在：`ModelsError("provider")`。
 - 没有可解析 credential：`ModelsError("auth")`。
-- header/payload hook 抛错：本次请求失败，由 agent lifecycle 转成 error message。
+- 请求准备或 header/payload 处理失败：沿模型流转换为 error message；具体 hook 的错误传播规则由其调用实现决定。
 - abort signal 向 credential 解析、网络 stream 和工具循环传递。
 - provider 返回统一 error event 后，coding-agent 决定是否 retry、compaction recovery 或结束。
 

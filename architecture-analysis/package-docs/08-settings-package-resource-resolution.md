@@ -2,7 +2,7 @@
 
 来源：`settings.md`、`packages.md`、`usage.md`、`security.md` 和 `sdk.md`，并核对 `settings-manager.ts`、`package-manager.ts` 与 `resource-loader.ts`。排除安装命令、配置字段全集、package 制作步骤和资源编写教程。
 
-## 1. 三个组件不是同一层
+## 1. 从有效设置到已加载资源
 
 ```mermaid
 flowchart LR
@@ -17,7 +17,7 @@ flowchart LR
   LOADER --> RESOURCES["extensions / skills / prompts / themes / context"]
 ```
 
-`SettingsManager` 决定当前有效设置；`PackageManager` 同时解析设置中的 package source 和全局/项目约定目录，产生带来源与启用状态的路径；`DefaultResourceLoader` 再合并这些路径与 CLI/SDK 显式输入，并加载具体内容。package 不是第五种运行时扩展，它只是 extensions、skills、prompts 和 themes 的分发容器。
+`SettingsManager` 决定当前有效设置；`PackageManager` 同时解析设置中的 package source 和全局/项目约定目录，产生带来源与启用状态的路径；`DefaultResourceLoader` 再合并这些路径与 CLI/SDK 显式输入，并加载具体内容。package 用于分发 extensions、skills、prompts 和 themes，内容仍由各自的加载器处理。
 
 ## 2. 全局与项目设置先经过信任边界
 
@@ -77,7 +77,7 @@ setCompactionEnabled(false)
 - filter 表示一个 package 中哪些资源被允许进入候选集合。
 - collision 表示多个候选最终具有同一资源名称时谁生效。
 
-同一 package 同时出现在全局与项目配置时，先按规范化身份去重；npm 使用 package name，git 使用不含 ref 的仓库 URL，本地来源使用绝对路径。项目配置通常覆盖全局条目；`autoload: false` 则让项目条目作为对全局条目的显式增减。package 内的 filter 只能在 manifest 或约定目录允许的集合上继续缩小，不能用 filter 越权读取任意路径。
+同一 package 同时出现在全局与项目配置时，先按规范化身份去重；npm 使用 package name，git 使用不含 ref 的仓库 URL，本地来源使用绝对路径。项目配置通常覆盖全局条目；`autoload: false` 则让项目条目作为对全局条目的显式增减。package 内的 filter 只能在 manifest 或约定目录允许的集合上继续缩小，不能仅靠 filter 将集合外的路径加入候选。该筛选规则不限制扩展加载后以宿主权限自行读取文件。
 
 解析后的资源还按来源优先级排序。当前 `PackageManager` 对顶层项目设置、项目自动发现、顶层用户设置、用户自动发现和 package 资源分配不同优先级，使后续“同名 first wins”得到稳定结果。诊断信息保留来源元数据，UI 才能说明资源来自哪里以及为何冲突。
 

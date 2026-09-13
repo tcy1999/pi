@@ -1,10 +1,10 @@
-# AgentHarness：durable runtime 与剩余切片
+# AgentHarness：可恢复运行时与待实现能力
 
 来源：`packages/agent/docs/harness.md`，并以 `packages/agent/src/harness/` 当前源码校正完成度。规范中明确标记为 design-only 或 not implemented 的部分不写成当前保证。
 
-## 1. 先看结论
+## 1. 当前实现范围
 
-`AgentHarness` 已从数据结构外壳变成可运行的 durable Agent runtime：
+`AgentHarness` 在会话存储中记录执行状态，使宿主能在进程重启后恢复操作。当前实现范围如下：
 
 | 范围 | 当前状态 |
 |---|---|
@@ -12,19 +12,19 @@
 | lane 获取/创建、run、compaction、navigation、resume、abort 与队列 | 已实现 |
 | provider/tool checkpoint、retry、deferred response、工具落位与 terminal result | 已实现 |
 | lane event/hook、`watch()` snapshot + 增量 | 已实现 |
-| 显式 Context 与 typed telemetry schema | Context 已贯穿；大多数 runtime span 尚未接线 |
-| session 级 `watchSession()` | 唯一公开 stub，抛出 `SliceNotImplemented` |
+| 显式 Context 与 typed telemetry schema | Context 已贯穿；大多数 runtime span 尚未接入 |
+| session 级 `watchSession()` | 尚未实现，调用时抛出 `SliceNotImplemented` |
 | JSONL 物理 snapshot compaction、search、未来格式迁移 | 规范已描述，尚未实现或尚未激活 |
 
 它仍未替代正式 `AgentSession`。默认 CLI/SDK 继续走产品会话；coding-agent 的实验性 session worker 已实际创建 `AgentHarness` 并通过 Chord service 暴露 lane 控制和 transcript。
 
-## 2. 它真正解决的问题
+## 2. 进程中断后如何判断执行进度
 
 普通 `Agent` 把一次模型—工具循环保存在内存里。持久运行的 Agent 还必须判断进程中断时外部效果进行到哪里。假设 shell 已删除文件，但 tool result 尚未提交；重启后只看聊天消息，无法知道应该重放还是跳过。
 
-Harness 因此把会话操作建模为可持久恢复的状态机。会话同时保存对话树、lane 配置/状态、operation program counter、assistant frame、工具参数/输出、usage 和最终结果。恢复直接读取 operation state，不从残缺 transcript 反推进度。
+Harness 因此把会话操作建模为可持久恢复的状态机。会话同时保存对话树、lane 配置/状态、操作执行位置、assistant frame、工具参数/输出、usage 和最终结果。恢复直接读取 operation state，不从残缺 transcript 反推进度。
 
-## 3. 三条边界各自解决什么
+## 3. 从宿主调用到执行与存储
 
 ```mermaid
 flowchart LR
@@ -55,7 +55,7 @@ flowchart LR
 提交 frame / tool output / usage 与下一 operation state
 ```
 
-崩溃发生在中间时，恢复代码知道哪一种效果处于不确定窗口。provider attempt 使用稳定请求标识和 retry state；工具按 replay policy 处理，安全工具可以重放，不可重放工具生成 synthetic interrupted result。结果不是 exactly-once，但不确定性被显式限制，且不会盲目重复全部副作用。
+崩溃发生在中间时，恢复代码知道哪一种效果处于不确定窗口。provider attempt 使用稳定请求标识和 retry state；工具按 replay policy 处理，安全工具可以重放，不可重放工具生成表示执行已中断的结果。这里不保证外部效果恰好发生一次（exactly-once）：工具可能已完成文件修改，但结果尚未提交。恢复流程记录这种不确定状态，避免自动重复不可重放的操作。
 
 `Drive` 是唯一顶层状态推进写者。terminal transaction 先把 lane 切回 idle 并确定结果，再单独写不可变 `OperationResultRecord`；调用方可用 operation ID 查询最终结果，即使原调用连接已经断开。
 
@@ -84,7 +84,7 @@ lane 不是另一份 session。它是在共享会话树上拥有独立 branch ti
 
 ## 8. 与正式 AgentSession 的关系
 
-正式 CLI/SDK 使用 `AgentSession`、`SessionManager`、旧 extension 系统和产品 compaction。Harness 使用 durable `Session`、`AgentLane`、Harness hook/event 与 `ExecutionEnv`。二者共享 `pi-ai` 和部分问题域，但格式、扩展模型和生命周期独立。
+正式 CLI/SDK 使用 `AgentSession`、`SessionManager`、产品扩展系统和产品 compaction。Harness 使用 durable `Session`、`AgentLane`、Harness hook/event 与 `ExecutionEnv`。二者共享 `pi-ai` 和部分问题域，但格式、扩展模型和生命周期独立。
 
 实验性 client/server 路径不是把 `AgentSession` 放到网络后面，而是在每会话 worker 中创建 Harness，并用 Chord facets 提供 `AgentController`、`Transcript`、`Models` 等服务。这个接入证明 Harness 已可运行，但不改变默认产品入口的稳定性标记。
 
@@ -94,4 +94,4 @@ lane 不是另一份 session。它是在共享会话树上拥有独立 branch ti
 2. 读 [`runtime/harness.ts`](../../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../../packages/agent/src/harness/runtime/lane.ts)，确认 lane 生命周期、admission、drive、恢复和 watch。
 3. 读 [`runtime/drive/`](../../packages/agent/src/harness/runtime/drive)，按 assistant、tools、checkpoint、recovery 和 terminal 拆分理解状态推进。
 4. 读 [`session/types.ts`](../../packages/agent/src/harness/session/types.ts)、[`session/values.ts`](../../packages/agent/src/harness/session/values.ts) 与 [`session/session.ts`](../../packages/agent/src/harness/session/session.ts)，确认存储和 mutation line；JSONL 事务与流式 fork 分别见 [`jsonl/io.ts`](../../packages/agent/src/harness/session/jsonl/io.ts) 和 [`jsonl/fork.ts`](../../packages/agent/src/harness/session/jsonl/fork.ts)。
-5. 最后读 [`harness.md`](../../packages/agent/docs/harness.md) 的 0.9 节，区分已实现机制与剩余切片。
+5. 最后读 [`harness.md`](../../packages/agent/docs/harness.md) 的 0.9 节，区分已实现机制与待实现能力。

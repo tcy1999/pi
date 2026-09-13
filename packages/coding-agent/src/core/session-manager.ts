@@ -785,12 +785,14 @@ async function buildSessionInfosWithConcurrency(
 		let task: Promise<void>;
 		task = buildSessionInfo(file)
 			.then((info) => {
+				// 每个任务自行保存结果，按输入位置排列，不受完成先后顺序影响。
 				results[index] = info;
 			})
 			.catch(() => {
 				results[index] = null;
 			})
 			.finally(() => {
+				// 成功或失败都会释放一个并发名额，让循环继续启动后面的文件。
 				inFlight.delete(task);
 				onLoaded();
 			});
@@ -798,10 +800,14 @@ async function buildSessionInfosWithConcurrency(
 	};
 
 	while (nextIndex < files.length || inFlight.size > 0) {
+		// 最多同时读取 10 个文件；每次有任务结束，就补满空出的名额。
 		while (nextIndex < files.length && inFlight.size < MAX_CONCURRENT_SESSION_INFO_LOADS) {
 			startNext();
 		}
 		if (inFlight.size > 0) {
+			// race 只等待任意一个任务结束，其他任务仍在运行；结果已由各任务写入 results。
+			// 若改为等待这一批 allSettled，9 个快任务也要等第 10 个慢任务结束后才能补位；
+			// 若一次启动所有文件再 allSettled，又无法限制同时打开的文件数量。
 			await Promise.race(inFlight);
 		}
 	}
@@ -1420,9 +1426,12 @@ export class SessionManager {
 	}
 
 	/**
-	 * Create a new session file containing only the path from root to the specified leaf.
-	 * Useful for extracting a single conversation path from a branched session.
-	 * Returns the new session file path, or undefined if not persisting.
+	 * 将根节点到 leafId（含该节点）的历史复制为新会话，并将当前 SessionManager 切换到新会话。
+	 * 例如对话为 A -> B -> C -> D，调用 createBranchedSession("B") 只复制 A、B，
+	 * 之后可以在新会话中接着 B 继续对话，原会话保持不变。
+	 * 历史的复制范围与书签状态分别处理：历史截至 B，A、B 的书签使用调用时的最新状态，
+	 * 即使书签是在 D 之后才添加或修改的，也会带入新会话；不会恢复成聊到 B 时的旧书签。
+	 * 返回新会话文件路径；内存模式返回 undefined。
 	 */
 	createBranchedSession(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
@@ -1431,9 +1440,18 @@ export class SessionManager {
 			throw new Error(`Entry ${leafId} not found`);
 		}
 
-		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
-		// Because labels are real tree entries, later entries can be children of labels;
-		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
+		// path 决定复制哪些历史节点；labelsById 决定这些节点现在有哪些书签。
+		// label entry 是一次书签变更操作，只复制 path 中的操作无法得到最新书签状态。
+		// 例如：A -> L1（给 A 标记“待确认”）-> B -> L2（给 A 改名为“已确认”）。
+		// 调用 createBranchedSession("B") 得到的 path 是 A -> L1 -> B，包含旧的 L1，
+		// 却不包含后来的 L2。直接复制会让 A 的书签变回“待确认”，不符合保留最新书签的规则。
+		// labelsById 来自整个会话：_buildIndex() 按文件顺序处理全部书签变更，
+		// appendLabelChange() 在运行期间同步更新它，因此表中 A 的书签已经是“已确认”。
+		// 这里先移除复制路径中的所有 label 操作，再给复制到新会话的节点带上最新书签，
+		// 每个书签重建一条记录，得到 A -> B -> 新 L（给 A 标记“已确认”）。
+		// 这样只复制书签的最终状态，无须逐条判断旧操作是否已被后续改名或清除覆盖。
+		// 原会话历史保持不变。副本需要重新连接父链，因为保留节点的父节点可能是被移除的 label：
+		// 上例中 B.parentId 必须从 L1 改为 A。
 		const pathWithoutLabels: SessionEntry[] = [];
 		const replacementByLabelId = new Map<string, string>();
 		const pendingLabelIds: string[] = [];
@@ -1443,6 +1461,8 @@ export class SessionManager {
 				pendingLabelIds.push(entry.id);
 				continue;
 			}
+			// 如果压缩记录的保留范围从被移除的 label 开始，就将边界改为下一个保留节点，
+			// 确保原本应保留的非 label 记录仍能进入上下文。
 			for (const labelId of pendingLabelIds) {
 				replacementByLabelId.set(labelId, entry.id);
 			}
@@ -1473,7 +1493,12 @@ export class SessionManager {
 			parentSession: this.persist ? previousSessionFile : undefined,
 		};
 
-		// Collect labels for entries in the path
+		// 复制了哪些节点，就带上哪些节点的最新书签。
+		// 例如只复制 A、B：给 A、B 的书签带上，给 C 的书签不带，因为没有复制 C。
+		// 即使 A 的书签是在聊完 C 后才修改的，也带上修改后的名称，不恢复成聊到 B 时的旧名称。
+		// labelsById 保存整个会话的最新书签，targetId 是被书签标记的节点 ID（如 A）。
+		// 下面用 pathEntryIds.has(targetId) 检查这个节点是否复制到了新会话。
+		// 已清除的书签不在表中；保留下来的书签沿用最后一次设置的时间。
 		const pathEntryIds = new Set(pathWithoutLabels.map((e) => e.id));
 		const labelsToWrite: Array<{ targetId: string; label: string; timestamp: string }> = [];
 		for (const [targetId, label] of this.labelsById) {
@@ -1483,7 +1508,9 @@ export class SessionManager {
 		}
 
 		if (this.persist) {
-			// Build label entries
+			// 将筛选出的当前书签状态写成新记录，追加在路径末尾。
+			// labelsById 本身不会写入 JSONL；重新打开新会话时，_buildIndex()
+			// 需要读取这些记录，才能恢复相同的书签状态。
 			const lastEntryId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
 			let parentId = lastEntryId;
 			const labelEntries: LabelEntry[] = [];

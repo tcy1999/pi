@@ -14,27 +14,27 @@
 
 ## 专题
 
-1. [AgentHarness：durable runtime 与剩余切片](./01-agent-harness-status-and-design.md)
+1. [AgentHarness：可恢复运行时与待实现能力](./01-agent-harness-status-and-design.md)
 2. [Coding Agent 运行时、会话树与压缩](./02-coding-agent-runtime-session-compaction.md)
 3. [扩展系统、资源加载与信任边界](./03-extension-resource-lifecycle.md)
 4. [TUI 组件、渲染与焦点模型](./04-tui-rendering-architecture.md)
 5. [RPC 模式与事件协议](./05-rpc-and-event-boundary.md)
-6. [Session Search 与遥测边界](./06-search-and-telemetry.md)
+6. [会话搜索与遥测边界](./06-search-and-telemetry.md)
 7. [模型目录、Provider 组合与认证边界](./07-model-provider-and-auth-runtime.md)
 8. [设置、Package 与资源解析链](./08-settings-package-resource-resolution.md)
 9. [Chord：Facet、Service 与 Replicated State](./09-chord-facets-services-and-delta.md)
 
 ## 扫描清单
 
-下表覆盖稳定产品文档，并把 agent-core 新增的研究/实施文档按主题归组。一个原文可以同时包含架构、计划和教程；这里只提取已由当前源码验证的架构事实。
+下表覆盖稳定产品文档，并把 agent-core 新增的研究/实施文档按主题归组。一个原文可以同时包含架构、计划和教程；已实现行为与设计计划按文末的状态标记区分。
 
 | 原文 | 处理结果 |
 |---|---|
-| `agent/docs/harness.md`、`assistant-durability.md`、`tool-durability.md`、`values.md` | 提取 durable operation、effect checkpoint、typed value/list 和当前完成度，见专题 1、6 |
+| `agent/docs/harness.md`、`assistant-durability.md`、`tool-durability.md`、`values.md` | 提取 durable operation、外部效果检查点、typed value/list 和当前完成度，见专题 1、6 |
 | `agent/docs/work-packages/`、`runtime-simplification.md`、`post-wp05-roadmap.md` | 用于校验实施决策；已落地部分并入专题 1，未实现计划不写成当前事实 |
 | `agent/docs/pico-v3.md`、`pico2.md`、`agent/docs/pico/` | 下一代 pico reference design、使用面草案、handoff 与 implementation plan；当前 `packages/agent/src/` 尚无 pico runtime，不写成现有能力 |
 | `agent/docs/plugins.md`、`mobile-handoff/` | 提取 facet/service、状态复制和跨进程边界；模式示例不写成内建能力，见专题 1、9 |
-| `agent/src/search/index.ts` | 原 `agent/docs/search.md` 与具体实现已移除；当前仅保留 draft service interface，见专题 6 |
+| `agent/src/search/index.ts` | 原 `agent/docs/search.md` 与具体实现已移除；当前仅保留服务接口草案，见专题 6 |
 | `agent/docs/telemetry-schema.md` | 提取 span 层次和内容边界，不复制生成字段表，见专题 6 |
 | `coding-agent/docs/sdk.md` | 提取 `AgentSessionRuntime`、`AgentSession`、资源与 mode 的关系，见专题 2、3、5 |
 | `coding-agent/docs/session-format.md` | 提取 JSONL 树、entry 类型和 context projection，见专题 2 |

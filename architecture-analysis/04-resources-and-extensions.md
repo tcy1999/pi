@@ -8,7 +8,7 @@ extension（扩展）是在 Pi 进程内执行的受信任 TypeScript/JavaScript
 
 `DefaultResourceLoader` 汇总 extensions、skills、prompt templates、themes 和 context files 五类集合，另外加载 system prompt 与 append-system-prompt 来源。resource 在这里指可被 Pi 发现和加载的扩展代码、Markdown 指令或主题文件。来源包括全局目录、项目 `.pi`/`.agents`、CLI 显式路径、npm/git/local packages 和内建扩展。
 
-资源加载不是简单 glob：它还处理设置覆盖、package manifest、过滤规则、冲突诊断、来源元数据和 reload。显式 `ResourceLoader` 接口允许 SDK 完全替换默认发现逻辑。
+资源加载除了匹配文件路径，还处理设置覆盖、包清单、过滤规则、冲突诊断、来源元数据和重新加载。显式 `ResourceLoader` 接口允许 SDK 完全替换默认发现逻辑。
 
 ### 1.1 Extension 与 Package 的区别
 
@@ -54,7 +54,7 @@ package manifest 是包中声明资源位置的清单；没有清单时使用约
 1. 读 [`resource-loader.ts`](../packages/coding-agent/src/core/resource-loader.ts) 的 `ResourceLoader` 接口与 `DefaultResourceLoader.reload()`，确认最终资源集合怎样形成。
 2. 读 [`package-manager.ts`](../packages/coding-agent/src/core/package-manager.ts)，向前追踪 npm、git、本地路径与 scope 的解析。
 3. 读 [`extensions/loader.ts`](../packages/coding-agent/src/core/extensions/loader.ts)，确认扩展源码怎样执行并生成 runtime 注册信息。
-4. 读 [`project-trust.ts`](../packages/coding-agent/src/core/project-trust.ts) 与 [`cli/project-trust.ts`](../packages/coding-agent/src/cli/project-trust.ts)，确认受保护资源在加载前怎样被 gate。
+4. 读 [`project-trust.ts`](../packages/coding-agent/src/core/project-trust.ts) 与 [`cli/project-trust.ts`](../packages/coding-agent/src/cli/project-trust.ts)，确认受保护资源在加载前怎样经过信任检查。
 
 ## 3. 扩展 API
 
@@ -69,7 +69,7 @@ package manifest 是包中声明资源位置的清单；没有清单时使用约
 
 ## 4. Skills 与 Prompt Templates
 
-Skill 是带元数据的 Markdown 能力包，按需注入模型上下文；prompt template 是用户触发的文本展开。两者故意不是可执行扩展：技能影响模型行为，扩展直接运行宿主代码。区分两者能让安装、发现和信任提示更准确。
+Skill 是带元数据的 Markdown 能力包，按需注入模型上下文；prompt template 是用户触发的文本展开。宿主把它们作为模型输入处理；其中的文字可能指导模型调用工具，但加载 Markdown 本身不会像 extension 一样执行宿主代码。
 
 ### 4.1 Skill 的渐进式加载
 
@@ -100,18 +100,18 @@ Skill 是带元数据的 Markdown 能力包，按需注入模型上下文；prom
 2. 读 [`system-prompt.ts`](../packages/coding-agent/src/core/system-prompt.ts) 的 `buildSystemPrompt()`，确认 `read` / `bash` 可用性怎样决定清单和读取指引。
 3. 读 [`agent-session.ts`](../packages/coding-agent/src/core/agent-session.ts) 的 `_expandSkillCommand()`，确认显式命令怎样把正文放进输入。编写与安装规则见 [Skills 用户文档](../packages/coding-agent/docs/skills.md)。
 
-## 5. Extension 体现的产品设计取舍
+## 5. 扩展如何参与产品流程
 
 Pi 没有把所有产品策略写死在 `Agent` 或 `InteractiveMode` 中。核心保持一个较小的模型—工具循环，coding-agent 在明确事件位置允许扩展观察或替换行为。这一选择体现在四点：
 
 - 扩展可以注册新能力，例如工具、命令和 provider，而不修改 agent loop。
-- 扩展可以在固定 hook 改变输入、system prompt、provider payload、工具调用结果或 compaction；改变发生在明确边界，不是任意 monkey patch。
+- 扩展可以在固定 hook 改变输入、system prompt、provider payload、工具调用结果或 compaction；这些 API 的调用时机由宿主确定。
 - 传给扩展的 context 只暴露受支持的产品操作，不直接交出全部内部对象。session 替换后旧 context 会失效，防止旧 UI 和订阅继续操作新会话。
 - 资源发现、代码执行和 session 绑定分开。这样 reload 可以重新计算资源来源与冲突，再建立新的运行时绑定。
 
 具体例子是 compaction。agent loop 只知道下一轮前可以 `prepareNextTurn()`；coding-agent 决定何时压缩；`session_before_compact` 又允许扩展取消默认压缩或提供自己的摘要。核心循环、产品策略和用户定制因此可以分别演进。
 
-代价也很明确：事件顺序、错误策略、reload 和 session 切换必须稳定，否则扩展会观察到不一致状态；扩展在宿主进程执行，能力边界不是安全沙箱；大量 UI 能力仍由 `InteractiveMode` 连接，使这个文件承担较高的组合复杂度。
+这要求宿主在 reload 和会话切换时维护稳定的事件顺序、错误策略与资源释放顺序。扩展的 UI 能力由 `InteractiveMode` 连接到终端组件；它与扩展 API 一样运行在宿主权限下。
 
 ### 5.1 具体实现
 

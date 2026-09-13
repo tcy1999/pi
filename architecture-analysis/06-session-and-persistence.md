@@ -1,6 +1,6 @@
 # 会话、上下文压缩与持久化
 
-当前仓库有两个会话子系统。它们概念相似，但类型、文件格式、压缩实现和入口不同。先分清它们，再看细节。
+正式产品与实验性 Harness 各有一套会话子系统。它们都保存历史并生成模型上下文，但类型、文件格式、压缩实现和调用入口独立。
 
 | 子系统 | 使用者 | 核心类型 | 存储 |
 |---|---|---|---|
@@ -9,13 +9,40 @@
 
 ## 1. 正式产品会话
 
-`packages/coding-agent/src/core/session-manager.ts` 负责正式产品的会话历史、resume、fork、clone、导航和 JSONL 文件。`AgentSession` 订阅 `Agent` 事件，在 user、assistant 和 tool result 完成时逐步追加记录，不是等整个请求结束后一次性保存。
+`packages/coding-agent/src/core/session-manager.ts` 负责正式产品的会话历史、resume、fork、clone、导航和 JSONL 文件。`AgentSession` 订阅 `Agent` 事件，在 user、assistant 和 tool result 完成时逐步追加记录。新建持久会话在首次 assistant 消息完成前只保留内存记录；首次写入会把 header 与已有 entry 一起保存，此后逐条追加。内存会话不写文件。
 
 正式产品的压缩位于 `packages/coding-agent/src/core/compaction/`。它根据 coding-agent 的 session entry 和产品设置生成摘要，由 `AgentSession` 决定手动压缩、阈值压缩和 overflow recovery 的触发与 UI 事件。压缩是通用问题，但这里是正式产品当前使用的具体实现。
 
+### 1.1 为什么采用树状历史
+
+编码任务经常需要回到某次分析之后，换一种方案继续，同时保留原方案的探索记录。例如先尝试方案 A，验证失败后回到分析节点 B，再尝试方案 B。下面每个节点代表一条消息，省略工具调用等中间记录：
+
+```text
+U：描述问题 → B：分析问题
+                 ├─ A1：尝试方案 A → A2：验证失败
+                 └─ B1：尝试方案 B → B2：验证成功
+```
+
+单条线性历史若只靠截断来回退，会丢失 A1、A2；若复制为独立会话，会重复保存共同前缀 U、B；若把所有消息继续串在一起，方案 A 的完整过程也会进入后续上下文。树结构用父节点引用共享前缀，让每条探索路径可以独立继续，也能保留和重新访问旧路径。
+
+在 `SessionManager` 中，这个过程只需要移动当前指针并追加记录：
+
+1. 方案 A 结束时，`leafId` 指向 A2。
+2. `branch(B)` 把 `leafId` 移到 B，已有记录保持不变。
+3. 追加 B1 时，将它的 `parentId` 设为 B，再把 `leafId` 移到 B1；B 因而同时拥有 A1 和 B1 两个子节点。
+4. 到 B2 时，构造上下文沿父链取出 U、B、B1、B2。没有分支摘要或压缩时，模型收到这条路径上的消息，A1、A2 仍保存在历史中。
+
+JSONL 文件按追加顺序保存 U、B、A1、A2、B1、B2；`parentId` 决定对话路径，所以不能直接把文件中所有消息按行顺序发送给模型。这里的 leaf 表示当前活动位置，回退时可以指向已有子节点的历史节点。
+
+如果需要把方案 A 的失败原因带给方案 B，可以在导航时选择生成 branch summary。`branchWithSummary()` 在目标位置追加摘要节点，后续消息接在摘要之后。摘要传递旧路径的必要信息，旧路径本身仍然保留；compaction 则负责缩短同一活动路径的上下文，见第 2、3 节。
+
+这个设计把完整历史的保留与本次模型输入的选择分开。代价是需要维护父链、活动指针和树导航，并在构造上下文时处理摘要边界。只支持顺序对话时，线性列表已经足够；支持保留历史的回退与多路线探索时，这些机制才有明确用途。会话树记录的是对话历史，移动指针本身不会撤销工具已经写入的工作区文件。
+
+实现入口见 [`session-manager.ts`](../packages/coding-agent/src/core/session-manager.ts) 的 `branch()`、`appendMessage()`、`branchWithSummary()` 和 `buildSessionContext()`；文件字段与 API 参考见 [Session File Format](../packages/coding-agent/docs/session-format.md#tree-structure)。
+
 ## 2. 正式产品怎样生成模型上下文
 
-context（上下文）是下一次请求实际交给模型的 system prompt、消息和工具定义。磁盘 session 由 entry 组成；entry 是每次追加的一条消息、模型变更、压缩或其他会话记录，并通过 `parentId` 形成树。leaf 是当前活动分支最末端的 entry。`SessionManager.buildSessionContext()` 只从当前 leaf 所在分支生成本次需要的消息。
+context（上下文）是下一次请求实际交给模型的 system prompt、消息和工具定义。磁盘 session 由 entry 组成；entry 是每次追加的一条消息、模型变更、压缩或其他会话记录，并通过 `parentId` 形成树。leaf 指向当前活动位置，决定下一条 entry 接在哪里。`SessionManager.buildSessionContext()` 只从当前 leaf 所在分支生成本次需要的消息。
 
 没有压缩时，它沿每条 entry 的 `parentId` 从当前 leaf 回到根，再恢复为正序消息。有压缩时，它使用：
 
@@ -57,7 +84,7 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 
 ### 3.3 怎样生成和落盘
 
-默认实现用当前模型发起独立总结请求。总结请求禁用 prompt cache，因为它是一次性输入，不值得写入供应商缓存；瞬时网络错误仍使用独立 retry 策略。若模型以 `length` 结束、返回 error 或试图调用工具，摘要不会保存。
+默认实现用当前模型发起独立总结请求。总结请求禁用 prompt cache，避免为这次独立总结写入供应商缓存；瞬时网络错误仍使用独立 retry 策略。若模型以 `length` 结束、返回 error 或试图调用工具，摘要不会保存。
 
 成功后，`AgentSession` 追加一个 compaction entry，其中保存 summary、`firstKeptEntryId`、压缩前 token 数、usage 和文件操作信息。随后它重新调用 `buildSessionContext()` 并替换 `Agent.state.messages`。原 entry 仍在 JSONL 中，所以导出、树浏览和再次分支仍能看到完整历史。
 
@@ -76,16 +103,14 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 
 ### 3.5 扩展可以改变什么
 
-`session_before_compact` hook 可以取消本次压缩，或直接提供自定义 compaction result；默认算法只在扩展没有接管时运行。成功后发 `session_compact`，失败后发 `session_compact_failed`。这说明 compaction 是核心产品策略，但摘要内容仍是可替换的扩展点。
+`session_before_compact` hook 可以取消本次压缩，或直接提供自定义 compaction result；默认算法只在扩展没有接管时运行。成功后发 `session_compact`，失败后发 `session_compact_failed`。压缩的触发与历史更新由产品管理，扩展可以替换摘要生成过程。
 
 ### 3.6 具体实现
 
-按“生成上下文—判断是否压缩—执行压缩—重建上下文”的顺序阅读：
-
-这条实现链横跨会话投影、触发判断和摘要算法，按下面的方法顺序看即可：
+按生成上下文、判断是否压缩、生成摘要、重建上下文的顺序阅读：
 
 1. 在 [`session-manager.ts`](../packages/coding-agent/src/core/session-manager.ts) 定位 `buildContextEntries()`：确认活动分支怎样投影成模型消息。
-2. 在 [`agent-session.ts`](../packages/coding-agent/src/core/agent-session.ts) 定位 `_checkCompaction()`：确认 manual、threshold 和 overflow 三种触发语义。
+2. 在 [`agent-session.ts`](../packages/coding-agent/src/core/agent-session.ts) 定位 `compact()` 和 `_checkCompaction()`：分别确认手动入口与自动阈值、溢出恢复检查。
 3. [`compaction.ts`](../packages/coding-agent/src/core/compaction/compaction.ts) 的 `estimateContextTokens()`、`findCutPoint()` 和 `prepareCompaction()`：确认 token 估算与切分不变量。
 4. 继续读同一文件的 `compact()` 与 `completeSummarization()`：确认摘要请求、失败条件和结果结构。
 5. 回到同一个 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 定位 `_runAutoCompaction()`：确认 compaction entry 落盘、context 替换和 overflow 重试。
@@ -95,11 +120,11 @@ token 估算优先使用最近一次有效 assistant usage，因为它是供应�
 `packages/agent/src/harness/session` 把一个原子 commit 表示为四类 write：
 
 - entry：有 `id`、`parentId`、`seq` 和时间戳的不可变历史节点。
-- value set/delete：按 namespace/key 保存当前值，例如 branch tip、lane config/state 和 operation state。
+- value set/delete：按 namespace/key 保存当前值，例如分支指针、lane 配置与状态、操作状态。
 - list append/delete：保存有序的追加事实，当前用于 assistant frame 和工具输出等运行记录。
 - usage：独立累计的 usage row，可关联 entry，也可表示 adjustment。
 
-这些写入共享同一个全局 sequence 空间并在一次 `Storage.commit()` 中原子发布。entry 适合保留事实树；value 适合可替换的程序计数器；list 适合流式追加；usage 适合独立统计。把它们硬塞成一种记录会迫使恢复扫描整段历史，或让临时 operation state 污染对话树。
+这些写入共享同一个全局 sequence 空间并在一次 `Storage.commit()` 中原子发布。entry 适合保留事实树；value 适合可替换的程序计数器；list 适合流式追加；usage 适合独立统计。恢复时可直接读取当前 operation state；对话树则只保留需要长期保存的历史节点。
 
 接口按范围拆分：`SessionRepo` 面对“有哪些会话”，负责创建、列出、打开、删除和 fork；`Storage` 面对一个已打开会话的原子写入与查询；`StorageBackedSession` 再提供 branch、名称/标签和 mutation line。`Session.mutate()` 给调用方一个 callback-scoped mutator，整段期间独占会话 mutation line，且最多提交一次。这样上层可以先读取当前 state、验证不变量，再把 entry、value、list 与 usage 一起提交。
 
@@ -115,11 +140,11 @@ flowchart LR
   X["lane: experiment"] -.-> D
 ```
 
-branch 是 durable session 中的命名历史指针；lane 是附着在同名 branch 上的 Agent 执行配置与状态。数据-only branch 可以没有 lane config；`AgentHarness.lane()` 只会取得或显式创建一条配置完整的 Agent lane。分支不需要复制整个消息数组，只需更新 `pi.branch.tip` value，再沿 parent 链计算活动路径。Harness context projection 把路径中的 message/compaction/branch-summary/custom entry 投影成模型消息；模型、thinking level 和 active tools 来自 lane configuration，不再通过历史中的 change entry 派生。
+branch 是 durable session 中的命名历史指针；lane 是附着在同名 branch 上的 Agent 执行配置与状态。仅保存历史的 branch 可以没有 lane config；`AgentHarness.lane()` 只会取得或显式创建一条配置完整的 Agent lane。分支不需要复制整个消息数组，只需更新 `pi.branch.tip` value，再沿 parent 链计算活动路径。Harness context projection 把路径中的 message/compaction/branch-summary/custom entry 投影成模型消息；模型、thinking level 和 active tools 来自 lane configuration，不再通过历史中的 change entry 派生。
 
 ## 6. Agent-core compaction 模块
 
-Agent-core 的 compaction 模块会生成可写入 `compaction` entry 的 summary、压缩前 token 数和 retained tail；durable session 的 context projection 使用最近一次 compaction 的 summary、tail 和后续节点构建模型上下文，原消息仍保留在历史树中。`AgentLane.compact()` 已接入 operation admission、可恢复 summary retry、hook、usage 与 terminal result；普通 run 也会在 checkpoint 处根据阈值触发 compaction。
+Agent-core 的压缩模块生成摘要、压缩前 token 数和保留的近期消息，结果写入 `compaction` entry。构建模型上下文时，使用最近一次压缩的摘要、保留消息和后续节点，原消息仍保存在历史树中。`AgentLane.compact()` 已接入操作接纳、可恢复的摘要重试、hook、usage 与最终结果记录；普通 run 也会在检查点根据阈值触发压缩。
 
 分支跳转也可以生成 branch summary，把离开路径的必要信息带到目标分支。压缩和分支摘要都是上下文投影，不是删除历史。其实现位于 `packages/agent/src/harness/compaction/`，与 coding-agent 的产品压缩代码独立。
 
@@ -171,5 +196,5 @@ agent-core 的 JSONL 格式当前为 v4：第一行是 header，后续每行一�
 ### 9.1 具体实现
 
 1. 读 [`agent-session-runtime.ts`](../packages/coding-agent/src/core/agent-session-runtime.ts) 的 switch、fork 和 new 操作，确认替换过程的总顺序。
-2. 接着看 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 的 `createReplacedSessionContext()`，确认新 cwd 下哪些依赖必须重建。
+2. 接着看 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 的 `createReplacedSessionContext()`，确认替换后提供给扩展的操作接口；新 cwd 下的依赖创建见 [agent-session-services.ts](../packages/coding-agent/src/core/agent-session-services.ts)。
 3. 读 [`interactive-mode.ts`](../packages/coding-agent/src/modes/interactive/interactive-mode.ts) 的 rebind 逻辑，确认 UI 怎样解绑旧 session、订阅新 session。

@@ -4,12 +4,10 @@
 
 ## 1. 两种不同的“重新加载”
 
-必须区分：
-
 - `AgentSession.reload()`：cwd 和 session 不变，重新读取当前项目的设置与资源，并替换 extension runtime/tool registry。
 - `AgentSessionRuntime` 的 session replacement：目标 cwd 可能变化，因此创建全新的 `AgentSessionServices` 和 `AgentSession`。
 
-前者更新一个 session 内的派生状态，后者替换整个 cwd 绑定对象图。
+例如，修改当前项目的 prompt 配置后执行 reload，会保留会话历史并重新加载提示模板；恢复另一个目录的会话，则需要为目标目录创建设置、资源和会话对象。
 
 ## 2. Session 内 reload 调用链
 
@@ -67,7 +65,7 @@ issue #2753 的回归测试覆盖了这个具体场景：启动后修改顶层 p
 
 ## 5. Extension runtime 为什么需要替换
 
-reload 后 extension 代码、注册的命令、工具、flags 和 hooks 都可能变化。旧 runner 不能原地追加新注册，否则已删除的 handler 和工具可能残留。因此顺序是 shutdown → invalidate → load → new runner → 重新绑定。
+reload 后 extension 代码、注册的命令、工具、flags 和 hooks 都可能变化。旧 runner 不能原地追加新注册，否则扩展源码中已删除的处理函数和工具可能残留。因此顺序是 shutdown → invalidate → load → new runner → 重新绑定。
 
 flag values 和当前 active tool names 会显式传入新 runtime，保留用户当前选择；extension tools 则从新的注册集合重新生成。
 

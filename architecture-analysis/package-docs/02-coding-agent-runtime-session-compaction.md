@@ -23,6 +23,8 @@ pi-agent-core Agent / agent-loop
 
 文件第一行是 session header，后续每行追加一个 entry。entry 用 `id`/`parentId` 形成树，当前 leaf 表示活动位置。跳到历史节点继续对话只需改变 leaf 并追加新 child，不需要复制文件。
 
+树结构用于保留回退前的探索路径，同时共享分支之前的历史；模型上下文只取当前路径。设计动机、方案切换示例和具体调用过程见 [为什么采用树状历史](../06-session-and-persistence.md#11-为什么采用树状历史)。
+
 主要 entry 分为：
 
 - message：user、assistant、tool result 等 AgentMessage。
@@ -33,11 +35,11 @@ pi-agent-core Agent / agent-loop
 - custom message：扩展注入且会进入模型上下文的消息。
 - label/session info：书签与会话展示信息。
 
-磁盘历史、活动分支和发给模型的上下文不是同一个东西。`buildSessionContext()` 沿当前 leaf 回溯活动路径，再应用模型变更、压缩和自定义 entry 的投影规则。
+磁盘历史保存全部分支，活动分支选定当前路径，模型上下文再按压缩等规则从这条路径生成。`buildSessionContext()` 沿当前 leaf 回溯活动路径，再应用模型变更、压缩和自定义 entry 的投影规则。
 
 ## 3. 持久化时机
 
-`AgentSession` 订阅 Agent 事件。user message、assistant message 和 tool result 在各自完成时追加，因此长请求中间已经存在可恢复的已完成历史。流式 partial assistant message 不作为最终 entry 提前写入。
+`AgentSession` 订阅 Agent 事件。user、assistant 和 tool result 在各自完成时追加到历史。新会话首次 assistant 消息完成前只保留内存记录；首次写入保存全部已有记录，此后逐条追加。流式 assistant 片段不提前写成最终 entry，因此在首次响应完成前崩溃，可能连首条用户消息也尚未落盘。
 
 ## 4. 压缩如何改变上下文
 
@@ -51,7 +53,7 @@ pi-agent-core Agent / agent-loop
 
 当单个 turn 自身超过保留预算时，切点可能位于 turn 中部。实现会分别总结更早历史和当前 turn 的前缀，避免把 tool result 与对应 tool call 错误拆开。
 
-自动压缩有三个触发语义：阈值、provider 返回 context overflow 后的恢复，以及手动请求。触发和 UI/重试编排由 `AgentSession` 负责，摘要算法位于 coding-agent 的 compaction 模块。
+压缩有三种入口：手动请求、上下文达到阈值，以及 provider 报告上下文溢出或可恢复的长度截断后的自动恢复。触发和 UI/重试编排由 `AgentSession` 负责，摘要算法位于 coding-agent 的 compaction 模块。
 
 `reserveTokens` 与 `keepRecentTokens` 可以在普通 compaction 设置中定义，也可以由 `modelOverrides` 按精确 `provider/modelId` 覆盖；两个字段独立回退到普通值和内建默认值。手动、阈值、overflow 与 extension preparation 使用同一组按活动模型解析的值，模型切换从下一次检查开始生效。
 

@@ -57,7 +57,7 @@ sequenceDiagram
 9. 执行 `before_agent_start`，允许 extension 追加消息或调整本次 system prompt。
 10. 调用 `Agent.prompt()`。
 
-这层负责产品语义；agent-core 不认识 slash command、skill、项目设置或 session JSONL。
+这层处理正式产品的斜杠命令、skill 展开、项目设置和会话持久化；下层 `Agent` / `agent-loop` 只接收处理后的消息和配置。agent-core 的 Harness 另有自己的 skill 与持久化能力，见 [Harness 专题](../package-docs/01-agent-harness-status-and-design.md)。
 
 直接调用异步 `steer()`/`followUp()` 也会进入 `_queueUserInput()`：先拒绝 extension command，经过同一 `input` hook，保留调用方的 `source`，再展开 skill/template 并进入核心队列。RPC 因而能把 queued input 标为 `rpc`，扩展也不会因为宿主绕过 `prompt()` 而漏掉输入事件。
 
@@ -73,7 +73,7 @@ sequenceDiagram
 
 每个模型 turn：
 
-1. 可选执行 `prepareNextTurn`，coding-agent 可在这里压缩或更新 model/context。
+1. 从第二个 turn 开始可选执行 `prepareNextTurn`，coding-agent 可在这里压缩或更新 model/context；首个请求的预压缩在 `AgentSession.prompt()` 中完成。
 2. 把 pending steering messages 加入上下文。
 3. `streamAssistantResponse()` 将 `AgentMessage[]` 转为 LLM `Message[]`。
 4. 调用 stream function，并把统一流转换为 message start/update/end。
@@ -91,7 +91,7 @@ sequenceDiagram
 
 ## 6. 事件、持久化与真正结束
 
-`AgentSession._handleAgentEvent()` 先 await extension event，再通知 session listeners，随后在 `message_end` 写入 `SessionManager`。因此持久化不是整次 run 最后一次性发生。
+`AgentSession._handleAgentEvent()` 先 await extension event，再通知 session listeners，随后在 `message_end` 写入 `SessionManager`。追加记录与实际写文件仍有区别：新会话首次 assistant 消息完成前先缓存，首次写入保存已有记录，之后逐条追加。
 
 `agent_end` 只表示本轮 loop 不再生成事件。coding-agent 还可能执行 retry、overflow recovery、compaction 或处理 extension 在 `agent_end` 加入的消息；这些工作完成后才发 `agent_settled` 并解除 idle wait。
 

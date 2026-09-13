@@ -2,9 +2,9 @@
 
 来源：`extensions.md`、`sdk.md`、`packages.md`、`security.md`。排除扩展编写教程、API 方法全集、package 安装与 manifest 示例。
 
-## 1. 扩展系统不是简单回调列表
+## 1. 从发现扩展到绑定会话
 
-扩展经过四个阶段：发现源码、执行 factory 收集注册、将注册结果绑定到当前 session、由 `ExtensionRunner` 按生命周期调用。扩展可以注册工具、命令、provider、输入转换、模型请求 hook 和 UI 能力，因此它属于产品运行时的一部分，不是静态配置。
+扩展经过四个阶段：发现源码、执行 factory 收集注册、将注册结果绑定到当前 session、由 `ExtensionRunner` 按生命周期调用。扩展可以注册工具、命令、provider、输入转换、模型请求 hook 和 UI 能力，这些注册结果由产品运行时保存并调用。
 
 ```text
 ResourceLoader 发现扩展与资源
@@ -27,7 +27,7 @@ factory 可以异步完成启动注册，但不应直接创建长生命周期资
 - `tool_call` 可以阻止工具，`tool_result` 可以改变返回结果。
 - session before 事件可以取消切换、fork、压缩或导航。
 
-需要返回值的 hook 通常顺序执行，使后一个 handler 能看到前一个 handler 的变更。普通扩展错误被记录后继续；工具调用拦截失败则偏向 fail-safe，避免在检查失效时仍执行工具。
+需要返回值的 hook 通常顺序执行，使后一个 handler 能看到前一个 handler 的变更。普通扩展错误被记录后继续；工具调用拦截抛错时会阻止执行，避免检查失败后继续调用工具。
 
 ## 3. Session 替换是完整生命周期边界
 
@@ -59,7 +59,7 @@ trust 只控制加载哪些输入。Pi 的工具和扩展仍以当前用户权�
 
 ## 6. 不同 mode 的 UI 能力
 
-扩展始终运行在产品 session 中，但 UI 能力取决于 mode：TUI 能提供完整组件；RPC 可把对话框转换成请求/响应子协议；JSON 与 print 没有交互 UI。扩展应根据 `mode` 和 `hasUI` 判断能力，而不能假设注册扩展就一定存在终端。
+扩展模块在资源加载时执行，随后才绑定到产品会话；绑定后的 UI 能力取决于运行模式：TUI 能提供完整组件；RPC 可把对话框转换成请求/响应子协议；JSON 与 print 没有交互 UI。扩展应根据 `mode` 和 `hasUI` 判断能力，而不能假设注册扩展就一定存在终端。
 
 ## 7. 具体实现
 

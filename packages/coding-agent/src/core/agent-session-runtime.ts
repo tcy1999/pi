@@ -263,7 +263,10 @@ export class AgentSessionRuntime {
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean; selectedText?: string }> {
+		// position 决定复制历史时是否包含选中的节点。例如 A -> B -> C，B 是用户消息：
+		// before 只复制 A，并将 B 的文本作为 selectedText 返回；at 复制 A、B。
 		const position = options?.position ?? "before";
+		// 先允许扩展取消；取消时还没有复制历史或停止旧会话。
 		const beforeResult = await this.emitBeforeFork(entryId, { position });
 		if (beforeResult.cancelled) {
 			return { cancelled: true };
@@ -277,8 +280,12 @@ export class AgentSessionRuntime {
 		}
 
 		if (position === "at") {
+			// 包含选中节点，可以选择任意已有 entry，不限于用户消息。
 			targetLeafId = selectedEntry.id;
 		} else {
+			// 本接口的 before 分支只接受用户消息，复制范围截至该消息的父节点。
+			// 交互模式的 /fork 会把返回的 selectedText 放入编辑器，用户可以修改后提交；
+			// 本函数只返回文本，不负责编辑或重新发送。
 			if (selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
 				throw new Error("Invalid entry ID for forking");
 			}
@@ -294,6 +301,10 @@ export class AgentSessionRuntime {
 			}
 			const sessionDir = this.session.sessionManager.getSessionDir();
 			if (!targetLeafId) {
+				// 上面 at 取 selectedEntry.id，before 取 selectedEntry.parentId。
+				// 已有节点的 id 不为空，所以这里的空值只能来自 before 取到了 null 父节点。
+				// 这表示选中的用户消息前面没有历史可复制，直接创建空会话即可，
+				// 无须读取原文件；选中消息的文本仍通过 selectedText 返回。
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
 				await this.teardownCurrent("fork", sessionManager.getSessionFile());
@@ -309,16 +320,23 @@ export class AgentSessionRuntime {
 				return { cancelled: false, selectedText };
 			}
 
+			// 有文件路径不代表文件已经创建：首次 assistant 消息前可能尚未落盘。
+			// 下面需要从文件复制已有历史，因此要求原文件存在；上面的空历史分支不需要。
 			if (!existsSync(currentSessionFile)) {
 				throw new Error(
 					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
 				);
 			}
+			// 用另一个 manager 读取原文件。createBranchedSession() 会改动这个 manager，
+			// 使其持有复制后的新会话数据；当前运行中的旧 AgentSession 此时仍未替换。
 			const sessionManager = SessionManager.open(currentSessionFile, sessionDir);
 			const forkedSessionPath = sessionManager.createBranchedSession(targetLeafId);
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
+			// 历史复制完成后，还需要让新会话接管运行：
+			// teardownCurrent 等旧响应收尾、通知扩展关闭并释放旧 AgentSession；
+			// createRuntime 用复制的数据创建新 AgentSession 和服务，apply 更新当前引用。
 			await this.teardownCurrent("fork", sessionManager.getSessionFile());
 			this.apply(
 				await this.createRuntime({
@@ -328,10 +346,13 @@ export class AgentSessionRuntime {
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
 				}),
 			);
+			// 让宿主重新绑定新会话，再用新 ctx 执行可选的 withSession 回调。
 			await this.finishSessionReplacement(options?.withSession);
 			return { cancelled: false, selectedText };
 		}
 
+		// 内存模式没有文件可重新打开，这里复用原 manager，所以必须先停止旧 AgentSession，
+		// 再将 manager 中的历史替换为空历史或选中路径。原内存历史不会另外保留一份。
 		const sessionManager = this.session.sessionManager;
 		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		if (!targetLeafId) {

@@ -22,7 +22,7 @@ pi coding-agent 子进程
 - response：命令是否成功；可用 request ID 关联。
 - event：Agent、message、tool、queue、compaction 和 retry 的异步状态流。
 
-命令完成与 Agent 流式事件是两个维度。客户端不能假设收到 response 才会出现事件，也不能把 `agent_end` 当成产品完全 idle；自动重试、overflow compaction 或 follow-up 之后才会出现 `agent_settled`。
+`prompt` 的成功响应表示输入预处理成功、已入队或已被扩展处理，不表示模型回答完成。命令响应与 Agent 流式事件分别报告这些状态。客户端不能假设收到 response 才会出现事件，也不能把 `agent_end` 当成产品完全 idle；自动重试、overflow compaction 或 follow-up 之后才会出现 `agent_settled`。
 
 ## 3. JSONL framing
 
@@ -40,7 +40,7 @@ pi coding-agent 子进程
 
 RPC 没有真实 TUI，但扩展仍可能请求 select、confirm 或 input。运行时把这类调用转换为 stdout request，并等待宿主通过 stdin 返回 matching response。notify/status 等操作是 fire-and-forget。
 
-因此 RPC 中 `hasUI` 可以为真，但只表示宿主能够处理结构化 UI 请求；依赖真实终端组件、主题或自定义 component 的能力仍不可用。
+因此 RPC 中 `hasUI` 可以为真，表示运行时提供结构化 UI 请求通道；具体交互仍需宿主实现响应处理，依赖真实终端组件、主题或自定义 component 的能力仍不可用。
 
 ## 6. 生命周期语义
 

@@ -1,13 +1,13 @@
 # Pi 项目架构分析
 
-本文档集基于 `main` 分支提交 `196aff41c`（2026-09-12）进行静态分析。分析对象包括源码、包清单、项目文档、测试入口、CI 和发布脚本；关键结论均回溯到当前源码。
+本文档集基于 `main` 分支提交 `196aff41c`（2026-09-12）进行静态分析。分析对象包括源码、包清单、项目文档、测试入口、CI 和发布脚本。后续修订以本地工作区的对应实现为准，因此个别说明可能包含该提交之后的变更。
 
 ## 核心名词
 
 - `AgentSession`：正式 coding-agent 使用的一次产品会话，连接模型、工具、扩展、设置和磁盘历史。
-- `AgentHarness`：`pi-agent-core` 中面向可恢复、可替换存储会话的 durable runtime；正式 CLI 仍使用 `AgentSession`，实验性 client/server 路径已通过 session worker 使用 Harness。
+- `AgentHarness`：`pi-agent-core` 中支持持久化与执行恢复的运行时，可替换存储后端；正式 CLI 仍使用 `AgentSession`，实验性 client/server 路径已通过 session worker 使用 Harness。
 - durable session（持久会话）：进程退出后仍可从后端恢复的会话数据和操作记录。
-- Chord：独立的应用组合运行时，提供 facet、service、replicated state 和远程 service 边界；实验性 coding-agent 跨进程架构用它组合插件和服务。
+- Chord：独立的应用组合运行时，通过 facet（在特定环境加载的插件单元）组合 service（服务），并向调用方复制服务状态；实验性 coding-agent 跨进程架构用它组合插件和服务。
 - provider（模型供应商适配）：描述一组模型、认证方式和请求实现的对象，例如 Anthropic 或 OpenAI provider。
 - extension（扩展）：在 Pi 进程内执行的受信任代码模块，可以注册工具、命令、事件处理函数、模型 provider 和界面能力。
 - hook（扩展事件处理函数）：Pi 在输入、模型请求、工具调用或会话切换等固定时点调用的扩展函数。
@@ -32,13 +32,13 @@
 - [Package 架构专题](./package-docs/README.md)：按 package 查组件与设计边界，与主线有内容重合。
 - [核心调用链](./call-flows/README.md)：逐函数追踪跨 package 的调用顺序、对象生命周期、重建边界和失败路径。
 
-## 一句话结论
+## 正式入口与实验入口
 
 正式发布的 `pi` 仍是 `pi-coding-agent` 组装出的编码 Agent：`AgentSession` 负责产品会话，`pi-agent-core` 的 `Agent` 和 agent loop 负责模型—工具循环，`pi-ai` 负责模型供应商接口，`pi-tui` 负责终端 UI。与此同时，仓库已经实现另一条实验路径：durable `AgentHarness` 在独立 session worker 中运行，Chord 负责 facet/service 组合与状态复制，`pi-protocol`/`pi-client`/`pi-server` 负责跨进程路由。两条路径共享底层包，但正式默认 CLI/SDK 尚未切换到 Harness。
 
 ## 分析边界
 
-- 文档描述当前 HEAD 的可达代码，不根据 Git 历史推断迁移计划。
+- 文档描述上述分析基线及本地修订所核对的可达代码，不根据 Git 历史推断迁移计划。
 - “源码存在”“有测试”“被正式 CLI/SDK 调用”是三种不同状态，文中会明确区分。
 - 供应商和模型目录变化频繁，因此重点分析机制，不逐一枚举模型。
 - 未执行真实模型请求或交互式 TUI；这些会产生外部调用且不是静态架构分析所必需。

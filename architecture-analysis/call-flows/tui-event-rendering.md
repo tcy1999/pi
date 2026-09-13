@@ -6,7 +6,7 @@
 
 ```text
 Terminal input
-→ pi-tui TUI.handleTerminalInput()
+→ pi-tui TuiBase.handleTerminalInput()
 → focused component / Editor.handleInput()
 → InteractiveMode 的 submit handler
 → AgentSession.prompt()
@@ -53,7 +53,7 @@ renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根�
 
 ## 3. 为什么 `requestRender()` 不立即输出
 
-模型 streaming 会在很短时间内产生大量 delta，工具和 footer 也可能同时失效。每次状态变化立即全量输出会造成闪烁、重复 ANSI 写入和 scrollback 破坏。
+模型 streaming 会在很短时间内产生大量 delta，工具和 footer 也可能同时失效。若每个增量都触发输出，即使采用差量渲染，也会重复布局计算并增加终端写入。
 
 `requestRender()` 合并重复请求，并受最小 render interval 限制。强制 render 会清理上一帧状态并走即时调度，主要用于尺寸或显示模式发生结构变化时。正常 render 仍由组件的 `render(width)` 生成完整逻辑帧，再由 renderer 计算最小终端更新。
 
@@ -67,7 +67,7 @@ renderer 由 coding-agent 的 `createInteractiveTui()` 创建；fullscreen 根�
 6. 与上一帧比较，仅输出必要行、cursor movement 和清理序列。
 7. 把硬件光标移动到最终输入位置。
 
-组件改变缓存状态后调用 `invalidate()`；改变可见状态后调用 `requestRender()`。二者用途不同：前者让下次 render 重算内容，后者安排一次 render pass。
+主题或布局输入改变而使缓存失效时，需要调用 `invalidate()`；安排屏幕更新则调用 `requestRender()`。前者让下次渲染重算内容，后者只调度一次渲染。
 
 ## 5. Session 替换时的重绑
 

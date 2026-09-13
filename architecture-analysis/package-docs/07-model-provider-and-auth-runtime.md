@@ -9,7 +9,7 @@
 - API implementation 把统一的 Pi 消息转换成 Anthropic、OpenAI、Google 等具体 wire protocol，再把供应商流转换回统一事件。
 - credential 是 provider 请求所需的 API key 或 OAuth 状态，不属于 model 定义。
 
-因此 `pi-ai` 不是只有一个“模型调用函数”。它定义上述公共类型、内建 provider/API 实现和统一流事件；coding-agent 的 `ModelRuntime` 再把产品配置、凭据和动态注册组合到这些能力上。
+`pi-ai` 定义上述公共类型、内建 provider/API 实现和统一流事件；coding-agent 的 `ModelRuntime` 再把产品配置、凭据和动态注册组合到这些能力上。
 
 ## 2. ModelRuntime 是 coding-agent 的组合点
 
@@ -43,13 +43,13 @@ flowchart LR
 
 ## 5. 请求时才解析动态值
 
-provider/model header 和 API key 可以引用环境变量或命令。目录展示只判断是否配置，不应为了打开模型选择器执行任意凭据命令；真正请求时才解析需要的值并组装 header。这样模型发现不会意外触发外部命令，也允许短期 credential 在请求边界更新。
+provider/model header 和 API key 可以引用环境变量或命令。配置中的命令型凭据在请求边界解析；仅查看模型可用性不应执行这些命令。具体是否复用缓存取决于解析函数：`resolveConfigValue()` 缓存命令结果，`resolveConfigValueOrThrow()` 与请求 header 解析使用不缓存的路径。目录联网刷新本身也可能需要认证，应与只读模型列表分开。
 
 ## 6. 统一流是 provider 的关键契约
 
 不同供应商的 wire format 最终都要产生相同的 assistant stream：start，随后 text/thinking/tool-call block 的 start、delta、end，最后 done 或 error。`Agent` 和上层 UI 只依赖这套事件，不直接理解 SSE payload、WebSocket frame 或厂商 JSON。
 
-这也是自定义 provider 最重要的边界：它不是只返回最终字符串，而必须维护 partial `AssistantMessage`、content index、usage、stop reason 和唯一终态。具体怎样注册和实现属于原始教程，不在本架构文档重复。
+自定义 provider 需要维护增量 `AssistantMessage`、内容块索引、usage、停止原因和唯一终态。例如工具参数分多个 delta 到达时，界面可展示部分参数，loop 则要等待最终消息后再校验并执行。
 
 供应商级包装可以横跨多种 API implementation。OpenCode/OpenCode Go 把 `sessionId` 统一映射为 `x-opencode-session`；OpenRouter 的兼容元数据则让 Chat Completions 与 Anthropic Messages 使用 `x-session-id`。同理，Fireworks Messages 通过模型兼容元数据声明 deferred tool reference 与 adaptive thinking，而不是让 `Agent` 按 provider 名称分支。
 

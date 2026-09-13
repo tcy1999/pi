@@ -12,12 +12,12 @@
 | [模型 Provider 请求](./model-provider-request.md) | `pi-coding-agent`、`pi-ai` | 厂商 API implementation | 模型选择、认证、header 和流事件如何进入请求 |
 | [Settings、资源与 Extension Reload](./resource-reload.md) | `pi-coding-agent` | package/extension loader | reload 更新什么，什么必须保持同一实例 |
 | [Prompt、Agent Loop 与工具执行](./prompt-and-agent-loop.md) | `pi-coding-agent`、`pi-agent-core` | `pi-ai`、工具实现 | 一次 prompt 如何循环调用模型和工具 |
-| [Session 替换](./session-replacement.md) | `pi-coding-agent` | mode 宿主绑定 | new、resume、fork、import 为什么替换整个 runtime |
+| [Session 替换](./session-replacement.md) | `pi-coding-agent` | mode 宿主绑定 | new、resume、fork、import 如何替换会话与依赖 |
 | [TUI 输入、事件与渲染](./tui-event-rendering.md) | `pi-coding-agent`、`pi-tui` | `AgentSession` 事件边界 | 输入怎样进入 session，流事件怎样变成终端更新 |
 
 ## 统一阅读约定
 
-每篇调用链固定区分五件事：
+阅读调用链时关注以下内容：
 
 1. 入口与终点：从哪个公开操作开始，到哪个可观察结果结束。
 2. package 边界：控制权在哪一步交给另一个 package。
@@ -25,7 +25,7 @@
 4. 分支与失败：取消、reload、abort、重试或部分失败发生在哪里。
 5. 不变量：修改代码时必须继续成立的约束。
 
-图中的调用只表示默认正式 CLI/SDK 的 `AgentSession` 路径。已接入实验性 client/server/session-worker 的 `AgentHarness` 路径不混入这组主链，单独见[跨进程协议、测试与工程治理](../08-remote-protocol-and-engineering.md)。
+图中的调用只表示默认正式 CLI/SDK 的 `AgentSession` 路径。已接入实验性 client/server/session-worker 的 `AgentHarness` 路径不混入这组主链，单独见[跨进程协议与工程实践](../08-remote-protocol-and-engineering.md)。
 
 ## 与其他文档的关系
 

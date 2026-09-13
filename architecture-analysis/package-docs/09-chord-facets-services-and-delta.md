@@ -1,6 +1,6 @@
 # Chord：Facet、Service 与 Replicated State
 
-来源：packages/chord/README.md、src/delta/README.md 与 coding-agent 实验性 service/facet 接入。排除 API 教程和 Delta tuple 全表。
+来源：`packages/chord/README.md`、`src/delta/README.md` 与 coding-agent 实验性 service/facet 接入。排除 API 教程和 Delta tuple 全表。
 
 ## 1. Chord 的边界
 
@@ -18,7 +18,7 @@ flowchart LR
   STATE --> DELTA["Delta operations"]
 ~~~
 
-plugin 是分发单位；facet 是其中在某个环境运行的 setup 单元。不同 facet 独立打包和加载，不共享隐式全局对象。
+plugin 是分发单位；facet 是其中在特定环境加载并执行初始化的单元。例如，同一插件的 worker facet 提供服务，TUI facet 消费该服务并渲染结果。两个 facet 独立打包和加载，通过服务传递数据。
 
 ## 2. FacetHost 如何组合生命周期
 
@@ -39,9 +39,9 @@ Chord 定义 transport-neutral 的 service call、catalogue、subscribe/unsubscr
 
 consumer 只为 facet 实际需要的 service 建立 binding。provider 暂时断开或替换时，stable handle 保留但处于 unavailable；重新 hydration 后恢复。Chord 不自动 reconnect 网络，也不决定认证、权限或 route。
 
-## 4. Replicated State 与 Delta
+## 4. 状态副本与增量同步
 
-provider 通过 replicatedState(initial) 获得 tracked state，修改 proxy 后调用 publish(context)。consumer 看到完整 immutable value；传输层发送的是 Delta batch。
+服务提供方通过 `replicatedState(initial)` 创建可追踪状态，修改其代理对象后调用 `publish(context)`。消费方读取完整、不可变的状态副本；传输层用 Delta 批次编码变化，减少重复发送。
 
 第一次 flush 一定是完整 base，后续 batch 只描述 set/delete、string append/front-truncate 和 array splice 等变化。每个订阅、每个 state member 都有独立的 path encoder/decoder 字典；complete replacement、provider replacement 或重新 hydration 会重置字典。Delta 假设单一权威 writer 和有序传输，sequence、重试与持久化由外层负责。
 
@@ -49,9 +49,9 @@ tracked JSON 必须是无环、无共享可变引用的树。插入 tracker 后�
 
 ## 5. Bundle 与 reload 边界
 
-Chord bundler 用 esbuild 将 package 的各 facet entry 构建为独立 content-addressed CommonJS 文件，并写 chord-facets.json。loader 校验 SHA-256，在 node:vm 中编译，通过 host 控制的 external resolver 加载 peer dependency。
+Chord bundler 用 esbuild 将包中各 facet 入口构建为独立的 CommonJS 文件，以内容哈希标识，并写入 `chord-facets.json` 清单。加载器校验 SHA-256，在 `node:vm` 中编译，再通过宿主提供的外部模块解析器加载 peer dependency。
 
-Chord 不安装 package、不运行 lifecycle script。构建先写完整临时目录再替换，加载失败或 reload 失败时保留旧 generation；成功 cutover 后才 dispose 旧 facet 与 bundle references，使旧代码可被垃圾回收。
+Chord 不安装 package、不运行 lifecycle script。构建先写完整临时目录再替换，加载失败或 reload 失败时保留旧 generation；切换成功后才释放旧 facet 与 bundle 引用，使旧代码可被垃圾回收。
 
 coding-agent 用这一机制把一个实验性插件拆成 src/session.ts 与 src/tui.ts。server/session worker 选择并加载 session facet，presentation 获取匹配的 TUI artifact；/reload 重新构建并原子切换，不把所有插件代码塞入同一进程。
 

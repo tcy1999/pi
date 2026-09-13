@@ -4,7 +4,7 @@
 
 ## 1. 什么操作会进入这条链
 
-`AgentSessionRuntime` 统一处理 `newSession()`、`switchSession()`、`fork()` 和 `importFromJsonl()`。这些操作不是修改当前 `AgentSession.messages`，而是替换当前 session；目标 session 还可能属于另一个 cwd。
+`AgentSessionRuntime` 统一处理 `newSession()`、`switchSession()`、`fork()` 和 `importFromJsonl()`。这些操作会创建新的 `AgentSession` 并更新 runtime 中的引用；目标会话还可能属于另一个工作目录。
 
 ## 2. 统一替换顺序
 
@@ -47,10 +47,10 @@ sequenceDiagram
 |---|---|---|
 | `newSession()` | 当前 session dir 中新建，或新的 in-memory manager | 保持当前 cwd |
 | `switchSession(path)` | 打开目标 JSONL | 读取目标 session header，可显式 override |
-| `fork(entryId)` | 持久 session 创建 branched file；in-memory session 原地创建分支 | 通常保持来源 cwd |
+| `fork(entryId)` | 持久 session 创建 branched file；内存会话复用 manager，将历史替换为选中路径或空历史 | 通常保持来源 cwd |
 | `importFromJsonl(path)` | 复制到当前 session dir 后打开 | 读取导入文件，可显式 override |
 
-恢复或导入时会先验证目标 cwd 是否存在。fork 还要区分选中 entry 之前和包含该 entry 两种位置，并把需要恢复到编辑器的用户文本返回给宿主。
+恢复或导入时会先验证目标 cwd 是否存在。fork 默认使用 `position: "before"`，只接受用户消息，复制到其父节点并返回该用户消息的文本；`position: "at"` 可选择任意已有 entry，并包含它。例如 A → B → C 中 B 为用户消息，before 复制 A 并返回 B 的文本，at 复制 A、B。内存 fork 不另存原历史，不能与同一历史树上的 `branch()` 导航混淆。
 
 ## 4. 所有权变化
 

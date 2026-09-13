@@ -8,11 +8,11 @@
 
 - `Component.render(width): string[]` 是最小渲染协议。
 - `Container` 组合组件。
-- `TuiBase` 管理终端、输入、焦点、overlay 和 16ms 渲染节流。
+- `TuiBase` 管理终端、输入、焦点和 overlay（浮层），并将渲染间隔限制为最短约 16 ms。
 - `TuiMainScreen` 做主屏增量行更新；`TuiAltScreen` 管理 fullscreen viewport、选择和搜索。
 - editor、markdown、select list、image 等是复用组件。
 
-`coding-agent/modes/interactive` 才把 AgentSessionEvent 转成消息组件、工具组件、footer 和命令 UI。`tui-renderer.ts` 集中创建 regular/fullscreen renderer，`chat-viewport.ts` 组合 scrollable transcript 与固定 input dock；实验性 client TUI 也复用这两个产品 composition helper。这个边界使 `pi-tui` 可独立用于其他终端应用。
+`coding-agent/modes/interactive` 才把 AgentSessionEvent 转成消息组件、工具组件、footer 和命令 UI。`tui-renderer.ts` 集中创建常规与全屏渲染器，`chat-viewport.ts` 组合可滚动的对话记录和固定输入区域；实验性 client TUI 也复用这两个布局与创建函数。这个边界使 `pi-tui` 可独立用于其他终端应用。
 
 工作、压缩、分支摘要和自动重试共用 `StatusIndicator` 渲染契约。支持嵌入状态的 editor 会把当前 indicator 放进顶部边框；不支持时才使用独立 status container。切换 renderer 或 editor 时会重新安置同一个活动 indicator，避免状态仅因 UI 重建而消失。
 
@@ -20,13 +20,13 @@
 
 ## 2. 差量渲染
 
-终端不是 DOM。每次清屏重画会闪烁、破坏滚动历史并放大慢速连接成本。TUI 保存上一帧规范化行，找到变化区域，只写必要 cursor movement 和内容。内容缩短、图片行、ANSI style、超链接和硬件 cursor 都需专门处理。
+每次清屏重画会闪烁、破坏终端滚动历史，并增加慢速连接的传输量。TUI 保存上一帧规范化后的行，找到变化区域，只输出必要的光标移动指令和内容。内容缩短、图片、ANSI 样式、超链接和终端光标都需单独处理。
 
 `CURSOR_MARKER` 是组件在字符串中发出的零宽标记；renderer 移除它并定位真实终端光标，以支持 IME 候选窗口。overlay 则把带 ANSI 的行按可见列宽切片后合成，不能用普通字符串索引。
 
 ## 3. Overlay 与焦点
 
-overlay 有视觉层级、捕获/非捕获模式、隐藏状态和 pre-focus 链。焦点恢复状态机处理“overlay 暂时让焦点给嵌入控件，控件关闭后是否恢复 overlay”等情况。实现复杂，但这是 settings、模型选择器、自定义扩展 UI 可以嵌套工作的基础。
+overlay 有视觉层级、捕获/非捕获模式、隐藏状态和 pre-focus 链。焦点恢复状态机处理“overlay 暂时让焦点给嵌入控件，控件关闭后是否恢复 overlay”等情况。例如模型选择器打开嵌套输入框后，关闭输入框应把输入焦点交回仍可见的选择器；选择器也关闭时，再恢复此前的编辑器焦点。
 
 ### 3.1 具体实现
 
@@ -37,4 +37,4 @@ overlay 有视觉层级、捕获/非捕获模式、隐藏状态和 pre-focus 链
 
 ## 4. Footer 是什么
 
-footer 是交互式终端底部的状态栏，默认显示目录、Git 分支、token/费用、context 占用、模型和扩展状态。自定义 footer 的渲染函数不能直接读取 `InteractiveMode` 的私有状态，所以 Pi 传入只读的 `FooterDataProvider`，提供 Git 分支、扩展 status 和可用 provider 数量。Git 监听和资源清理由产品层统一管理；footer 只读取并渲染。它不是主要架构主线；需要了解具体实现时，先读 [`footer.ts`](../packages/coding-agent/src/modes/interactive/components/footer.ts) 的渲染输入，再读 [`footer-data-provider.ts`](../packages/coding-agent/src/core/footer-data-provider.ts) 的只读数据边界。
+footer 是交互式终端底部的状态栏，默认显示目录、Git 分支、token/费用、context 占用、模型和扩展状态。自定义 footer 的渲染函数不能直接读取 `InteractiveMode` 的私有状态，所以 Pi 传入只读的 `FooterDataProvider`，提供 Git 分支、扩展 status 和可用 provider 数量。Git 监听和资源清理由产品层统一管理；footer 只读取并渲染。需要了解具体实现时，先读 [`footer.ts`](../packages/coding-agent/src/modes/interactive/components/footer.ts) 的渲染输入，再读 [`footer-data-provider.ts`](../packages/coding-agent/src/core/footer-data-provider.ts) 的只读数据边界。

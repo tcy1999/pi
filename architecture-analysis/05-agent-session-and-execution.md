@@ -2,7 +2,7 @@
 
 模型与认证、资源与扩展准备完成后，`createAgentSessionFromServices()` 将它们交给 SDK 的 `createAgentSession()`，后者构造 `Agent` 与 `AgentSession`。本章先沿一次产品请求看这些对象如何配合，再展开底层模型—工具循环。
 
-这里的 agent loop 指模型与工具之间的控制循环：请求模型；如果模型返回工具调用，就执行工具并把结果加入上下文，再请求模型；没有工具调用时结束。一次 run 是从一个新 prompt 开始到本轮处理完全停止；一个 turn 是其中的一次模型响应以及该响应产生的工具结果。
+这里的 agent loop 指模型与工具之间的控制循环：请求模型；如果模型返回工具调用，就执行工具并把结果加入上下文，再请求模型；没有工具调用时结束。在 `Agent` 层，一次 run 由 `prompt()` 或 `continue()` 启动，以 `agent_start` / `agent_end` 为边界；一个 turn 包含一次模型响应及其工具结果。一次产品侧 `AgentSession.prompt()` 可能因重试或溢出恢复启动多个底层 run，直到 `agent_settled` 才完成本次后处理。
 
 ## 1. 一次请求的完整路径
 
@@ -89,17 +89,13 @@ sequenceDiagram
 - `Agent` 保存运行状态，并拥有 steer/follow-up 核心队列；`agent-loop` 执行模型—工具循环和队列投递；`pi-ai Provider` 处理具体供应商协议。
 - 当前 coding-agent 的 `AgentSession` 在这些通用能力外处理输入展开、扩展、设置同步、UI 队列镜像、产品 JSONL 持久化，以及自动压缩/重试的触发与呈现。压缩和队列不是 coding-agent 独有能力；这里只描述正式产品的实际接入路径。
 - 工具调用不会创建新的用户请求。工具结果被加入同一个 Agent run 的上下文，随后开始下一个模型 turn。
-- `SessionManager` 在 `message_end` 等事件到达时逐步追加 JSONL，不是等整次请求结束后一次性保存。
+- `SessionManager` 在 `message_end` 时追加历史记录。新会话首次 assistant 消息完成前先缓存在内存；首次写入包含已有记录，此后逐条追加 JSONL。
 
-收到 `agent_end`，表示 Agent 已结束这一轮执行，但收尾工作可能还没做完。`waitForIdle()` 会等 `AgentSession` 内部需要等待的扩展处理、历史保存等工作完成，并清理运行状态后才结束。
-
-这里不会等待所有外部代码。例如，界面通过 `AgentSession` 监听事件，并在监听函数里发起异步网络请求，`waitForIdle()` 不会等这个请求完成。它保证的是 Agent 自身及内部会话处理已经收尾，不保证外部监听函数启动的异步任务也已结束。
+`agent_end` 后仍可能发生会话级重试、自动压缩或队列续跑。`AgentSession.waitForIdle()` 等待会话的空闲条件成立，覆盖这些内部后处理；`Agent.waitForIdle()` 只等待底层 Agent 的运行结束。两者都不等待 `AgentSession.subscribe()` 的外部监听函数自行启动的异步任务。
 
 ### 1.3 具体实现
 
-按一次请求向下调用、再由事件返回的顺序阅读：
-
-要把时序图和源码对应起来，可以先沿这四个调用点走一遍：
+按请求执行与事件返回的顺序，对照以下四个调用点：
 
 1. 在 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 看 `prompt()`，确认输入 hook、模板展开、队列、认证和压缩检查的先后关系。
 2. 接着看 [agent.ts](../packages/agent/src/agent.ts) 的 `prompt()` 和 `runWithLifecycle()`，确认 active run 怎样建立。
@@ -236,7 +232,7 @@ SDK 宿主可以通过 `shouldStopAfterTurn` 加入轮数、费用或重复行�
 
 ## 4. `AgentSession` 与 `AgentHarness`
 
-`AgentSession` 是正式 coding-agent CLI/SDK 使用的产品运行时。`AgentHarness` 是 agent-core 中已经可执行的 durable runtime；它组合以下通用能力：
+`AgentSession` 是正式 coding-agent CLI/SDK 使用的产品运行时。agent-core 的 `AgentHarness` 支持持久化与执行恢复，组合了以下通用能力：
 
 - `ExecutionEnv`：文件系统、shell、路径和临时文件端口。
 - `Session`：原子提交 entry、typed value/list 和 usage。
@@ -245,7 +241,7 @@ SDK 宿主可以通过 `shouldStopAfterTurn` 加入轮数、费用或重复行�
 - typed telemetry。
 - 工具集合、hook、事件与 lane snapshot reducer。
 
-`AgentHarness` 管理会话级资源和 lane 集合；`AgentLane` 是实际操作边界。每条 lane 绑定同名 branch，并持久化模型、thinking、active tools、当前 operation 和 inbox。`prompt()`、`skill()`、`compact()`、`navigateTree()`、`resume()`、`abort()`、steer/follow-up/next-run 队列、`watch()` 与分支/整树 fork 均已有实现和测试。当前唯一公开 stub 是 session 级 `watchSession()`；JSONL 物理压缩、search 和未来格式迁移也仍是明确的后续切片。
+`AgentHarness` 管理会话级资源和 lane 集合；`AgentLane` 是实际操作边界。每条 lane 绑定同名 branch，并持久化模型、thinking、active tools、当前 operation 和 inbox。`prompt()`、`skill()`、`compact()`、`navigateTree()`、`resume()`、`abort()`、steer/follow-up/next-run 队列、`watch()` 与分支/整树 fork 均已有实现和测试。session 级 `watchSession()` 仍未实现；JSONL 物理压缩、会话搜索和未来格式迁移也仍待实现或启用。
 
 正式 CLI/SDK 仍由 `AgentSession` 直接持有 `Agent`，使用自己的 `SessionManager`、extension 系统和产品 compaction。Harness 不在这条默认请求路径，但已进入 coding-agent 的实验性远程路径：
 
@@ -267,14 +263,14 @@ Harness 不把 agent-loop 的内存消息数组当成唯一事实。一次操作
 
 1. 先看 [agent-session.ts](../packages/coding-agent/src/core/agent-session.ts) 的构造函数，确认正式产品怎样直接组合 `Agent`。
 2. 读 [`agent-harness.ts`](../packages/agent/src/harness/agent-harness.ts)，确认公开 `AgentHarness`/`AgentLane` 契约。
-3. 读 [`runtime/harness.ts`](../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../packages/agent/src/harness/runtime/lane.ts)，确认 lane 获取、operation admission、drive、恢复和 watch。
-4. 最后读规范 [`harness.md`](../packages/agent/docs/harness.md)，其中 0.9 节明确列出尚未实现的切片。
+3. 读 [`runtime/harness.ts`](../packages/agent/src/harness/runtime/harness.ts) 与 [`runtime/lane.ts`](../packages/agent/src/harness/runtime/lane.ts)，确认 lane 获取、操作接纳、drive、恢复和 watch。
+4. 最后读规范 [`harness.md`](../packages/agent/docs/harness.md)，其中 0.9 节列出待实现能力。
 
 ## 5. System prompt 与能力必须同步
 
 system prompt 是每次模型请求最前面的行为说明。Pi 不把它视为一段固定常量：`AgentSession` 根据当前启用工具收集工具摘要和使用约束，再由 `buildSystemPrompt()` 组合基础角色、可用工具、通用 guidelines、Pi 文档位置、项目 context files、skills 和 cwd。
 
-这里的关键不是“prompt 写得长”，而是模型描述与真实能力一致：
+system prompt 中描述的能力需要与当前启用的工具一致：
 
 - 只有当前启用且提供 prompt snippet 的工具才进入 `Available tools`。
 - `read`、`edit`、`bash` 等工具可以贡献自己的 guideline；同一 guideline 会去重。
@@ -293,16 +289,14 @@ system prompt 是每次模型请求最前面的行为说明。Pi 不把它视为
 
 ## 6. 内建工具的设计
 
-工具不是对 Node API 的薄包装，而是带 Agent 语义的安全适配器：
+内建工具在文件和进程 API 之上增加参数验证、输出处理和调用结果格式：
 
 - `read` 支持文本分页、字节/行截断、图片 MIME 检测和可注入图片处理。
 - `bash` 捕获 stdout/stderr，按 100ms 节流进度，尾部截断并把完整输出写入临时文件。
 - `edit` 对原文件做唯一、非重叠的精确替换，保留 BOM/换行风格，并返回人类 diff 与统一 patch。
 - 文件写工具通过 mutation queue 串行化同一路径写入，降低并发工具互相覆盖。
 
-问题示例：如果一个 bash 命令输出 20MB，直接塞进上下文会耗尽 token；只返回前几行又常丢失最终错误。解决方案是保留尾部、提示截断范围并提供完整输出路径。
-
-一个成功的 shell 命令可能输出数百 MB。不能等全部输出收集完再截断，否则模型上下文虽然小，进程内存已经承受了完整数据。
+例如，一个 bash 命令输出 20 MB 日志，最后才报告错误。完整返回会占用大量上下文，只保留开头又会漏掉错误；等全部输出收集完再截断，还会增加内存占用。因此工具在接收输出时保留滚动尾部，超出阈值后写入完整日志文件，并在结果中返回该路径。
 
 正式 bash 使用 `OutputAccumulator`：流式解码 UTF-8、维护用于展示的滚动尾部、在超出阈值后把完整原始输出保存到临时文件。工具返回截断内容、原因和完整输出路径；进度更新另做节流，结束时刷新剩余更新并关闭输出流。
 

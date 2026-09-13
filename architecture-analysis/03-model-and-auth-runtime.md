@@ -14,17 +14,23 @@ provider（模型供应商适配）是描述一组模型、认证方式、模型
 - `AssistantMessageFrame`：可独立持久化和归约的流式帧，供 durable Harness 在重启后恢复部分 assistant 输出。
 - `ImageProvider`/`ImageModel`：独立于对话模型的图片生成目录和请求接口。
 
-调用方通常使用 `Models.streamSimple()`；它负责鉴权、默认参数和 thinking level 映射。需要供应商高级能力时仍可用 typed API-specific options，避免最低公分母接口。
+调用方通常使用 `Models.streamSimple()`；它负责鉴权、默认参数和 thinking level（推理强度）映射。需要供应商专有能力时，可以使用对应 API 的类型化选项。
 
-## 2. Provider 注册而非全局分支
+## 2. 注册供应商实现，并按模型所属供应商调用
 
-以 OpenAI 为例，`openaiProvider()` 组合模型表、环境变量鉴权和 `openAIResponsesApi()`。其他 provider 使用同一工厂。`builtinModels()` 只是注册所有 provider 的便利函数；关注 bundle size 的应用可只导入单个 provider。
+不同供应商使用不同的认证方式和请求接口。Pi 将这些实现与模型目录组合成 `Provider` 对象，通过 `models.setProvider(provider)` 按 `provider.id` 保存到当前 `Models` 实例中。发起请求时，`Models.streamSimple()` 根据 `model.provider` 查找对应对象，解析凭据并合并请求参数，再调用该对象的 `streamSimple()`。
 
-这比在一个巨大 `switch(provider)` 中处理所有请求更易扩展，也支持 extensions 注册自定义供应商。
+以 OpenAI 为例，`openaiProvider()` 调用 `createProvider()`，组合内建模型表、支持读取 `OPENAI_API_KEY` 的认证方法和 `openAIResponsesApi()` 请求实现。注册后，`model.provider` 为 `"openai"` 的请求就会交给这个对象，最终由 OpenAI Responses 适配器发送请求并转换响应事件。
+
+接入新供应商时，可以实现并注册新的 `Provider`，公共请求入口继续按相同流程查找和调用，无需增加针对该供应商的 `if` 或 `switch` 分支。coding-agent 的扩展也支持注册自定义供应商，具体配置由 `ModelRuntime` 组合后加入模型集合。
+
+`builtinModels()` 创建一个 `Models` 实例，并注册 `builtinProviders()` 返回的全部内建供应商。只需要某个供应商的应用，也可以单独导入其工厂函数，再将返回的对象注册到自己创建的集合中，以减少打包时引入的模块。
+
+实现入口：[models.ts](../packages/ai/src/models.ts) 的 `setProvider()`、`streamSimple()` 和 `createProvider()`；OpenAI 的组合见 [openai.ts](../packages/ai/src/providers/openai.ts)，内建供应商的批量注册见 [all.ts](../packages/ai/src/providers/all.ts)。
 
 ### 2.1 ModelRuntime 创建时做了什么
 
-coding-agent 在列出模型、登录和调用模型时，需要使用同一份配置和认证状态。例如，模型目录中有某个模型，但本机没有该 provider 的凭据，所以它会出现在模型列表里，但暂时不能使用。`ModelRuntime.create()` 创建这些操作需要的对象，并读取初始的模型列表和认证状态。
+`ModelRuntime.create()` 为 coding-agent 初始化模型和认证相关的运行时对象：读取模型配置、准备凭据与模型目录存储、注册供应商，并默认执行一次刷新，更新模型列表和认证状态。后续列出模型、登录和发起请求都通过这个运行时完成。
 
 ```text
 ModelRuntime.create(options)
@@ -55,7 +61,9 @@ ModelRuntime.create(options)
 | `refreshOnCreate: false` | 跳过初始刷新；同步模型列表仍有已组合的模型，但可用模型和认证快照尚未初始化 |
 | 提供 `modelRefreshTimeoutMs` 且启用创建时联网刷新 | 对初始刷新阶段设置取消 timer，并与调用方 signal 合并；不是整个构造过程的统一超时 |
 
-检查模型是否可用时，主要看认证配置是否完整，以及模型是否符合 provider 的过滤条件。Pi 不会逐个调用模型来确认权限、余额或服务是否正常。`ModelRuntime.create()` 也不负责选择本次对话的模型或创建 AgentSession。实际调用模型时，还会重新读取和解析凭据，见本章第 6 节。
+完整模型列表与可用模型列表不同。例如，内建目录中包含 OpenAI 的模型，但用户既没有保存 API key，也没有设置相应环境变量，这些模型仍会出现在完整列表中，却不会进入可用列表。检查模型是否可用时，主要看认证配置是否完整，以及模型是否符合 provider 的过滤条件。Pi 不会逐个调用模型来确认权限、余额或服务是否正常。
+
+`ModelRuntime.create()` 不负责选择本次对话的模型或创建 AgentSession。实际调用模型时，还会重新读取和解析凭据，见本章第 6 节。
 
 部分初始化步骤失败时，仍可能返回 `ModelRuntime`。例如，应用 provider 配置失败时，会记录错误，并在有内建 provider 的情况下保留它；刷新模型目录失败时，会按 provider 收集错误。`create()` 会等待 `refresh()` 完成，但不会因为返回结果中有刷新错误就抛出异常。因此，创建成功并不代表所有模型目录都刷新成功。可以通过 `getError()` 查看配置、provider 组合和可用性检查中的错误；主动调用 `refresh()` 时，还应检查返回的 `errors` 和 `aborted`。
 
@@ -121,7 +129,7 @@ done(reason=toolUse)
 2. 读 [`models.ts`](../packages/ai/src/models.ts) 的 `Models.streamSimple()`，确认模型选择、认证和公共 options 怎样进入请求。
 3. 读 [`anthropic.ts`](../packages/ai/src/providers/anthropic.ts)，确认 provider 怎样组合模型目录、认证和 API implementation。
 4. 读 [`anthropic-messages.ts`](../packages/ai/src/api/anthropic-messages.ts)，确认统一消息怎样变成网络 payload，原生流又怎样变回统一事件。
-5. 读 [`assistant-message-frame.ts`](../packages/ai/src/utils/assistant-message-frame.ts)，确认 transient stream 如何变成 durable frame 并被归约。
+5. 读 [`assistant-message-frame.ts`](../packages/ai/src/utils/assistant-message-frame.ts)，确认临时流事件如何编码为可持久化的帧，再还原成消息。
 
 ## 4. 延迟加载
 
@@ -166,7 +174,7 @@ deferred tool loading 也保留供应商差异。Fireworks Messages 已声明原
 
 这里有一种值得单独报告的失败：凭据已经写入，但本地快照更新失败。代码用 `CredentialSynchronizationError` 表达这个状态，不能将它笼统解释成“登录没有成功、什么都没保存”。
 
-### 6.2 凭据的选择不是失败后随意换账户
+### 6.2 凭据的选择顺序与失败处理
 
 `resolveProviderAuth()` 的请求解析顺序是：
 
@@ -237,7 +245,7 @@ cache（缓存）只表示“保存某些数据供后续复用”。Pi 中有几
 | 配置命令缓存 | 本地进程内 | `!command` 的输出或失败值 | 减少重复执行凭据命令 |
 | process cache | 当前 Pi 进程内 | Git 分支、渲染结果或连接等派生数据 | 避免重复计算或重连 |
 
-它们没有统一失效策略，也不能互相替代。讨论 Agent 工程中的 cache 时，通常首先指 provider prompt cache。
+它们没有统一失效策略，也不能互相替代。下文分别说明本地缓存的失效规则和供应商 prompt cache。
 
 ### 8.1 本地缓存的失效与刷新
 
@@ -257,7 +265,7 @@ Pi 每个 turn 仍会构造并发送完整逻辑 context；它不会把旧消息
 
 稳定的 session ID 有两个相关但不同的用途：它可以作为 prompt cache key，也可能作为供应商的请求路由或连接亲和标识。不能看到 `sessionId` 就断言一定发生了 cache hit；真实命中只以供应商返回的 usage 为准。
 
-compaction 会把大量旧消息替换为一条新摘要，改变 prompt 前缀，因此紧接压缩后的请求可能减少 cache hit。这是“缩短 context”与“保持相同前缀供缓存复用”之间的真实取舍。压缩自己的总结请求明确使用 `cacheRetention: "none"`，避免为一次性总结写缓存。
+上下文压缩会把大量旧消息替换为摘要，改变 prompt 前缀，因此紧接压缩后的请求可能减少缓存命中。评估压缩成本时，需要同时考虑输入量减少和缓存命中变化。压缩使用的总结请求明确设置 `cacheRetention: "none"`，避免为一次性总结写缓存。
 
 `coding-agent/src/core/cache-stats.ts` 比较相邻 assistant usage，估算 cache miss 带来的额外费用；footer 只是展示累计 `cacheRead/cacheWrite` 和最近命中率，不负责缓存本身。
 

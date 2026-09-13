@@ -4,7 +4,7 @@
 
 ## 1. 入口与终点
 
-正式 CLI 从 `main(args)` 开始。本链路的终点不是单独的 `AgentSession`，而是同时持有当前 session 和 cwd 绑定 services 的 `AgentSessionRuntime`。
+正式 CLI 从 `main(args)` 开始。本链路最终创建 `AgentSessionRuntime`，由它持有当前 `AgentSession` 及绑定到工作目录的服务。
 
 ```mermaid
 sequenceDiagram
@@ -40,7 +40,7 @@ sequenceDiagram
   RT-->>MAIN: 当前活动 runtime
 ```
 
-基础 ModelRuntime 先准备内建 provider、凭据与模型配置；随后资源加载执行扩展，services 才注册扩展 provider 并刷新模型视图。CLI 通常在调用 services 前就准备了目标 cwd 的 SettingsManager，因此图中复用设置实例不代表此时才首次读取配置。ModelRuntime 的创建细节见[模型运行时](../03-model-and-auth-runtime.md#21-modelruntime-创建时怎样装配这些对象)，资源发现与信任见[资源与扩展](../04-resources-and-extensions.md)。
+基础 ModelRuntime 先准备内建 provider、凭据与模型配置；随后资源加载执行扩展，services 才注册扩展 provider 并刷新模型视图。CLI 通常在调用 services 前就准备了目标 cwd 的 SettingsManager，因此图中复用设置实例不代表此时才首次读取配置。ModelRuntime 的创建细节见[模型运行时](../03-model-and-auth-runtime.md#21-modelruntime-创建时做了什么)，资源发现与信任见[资源与扩展](../04-resources-and-extensions.md)。
 
 ## 2. 为什么必须分成两阶段
 
@@ -51,7 +51,7 @@ session 参数依赖 services 的加载结果，不能在 services 之前完整�
 - `ModelRuntime` 接收 extension provider 后，才能正确解析 `--models` 或项目默认模型。
 - `SessionManager` 的历史决定是恢复原模型，还是选择新的默认模型。
 
-因此顺序必须是“确定目标 cwd → 创建 services → 解析 session options → 创建 session”。`createAgentSessionFromServices()` 本身只是受约束的装配器，它保证传给 `createAgentSession()` 的 cwd、settings、resources 和 model runtime 来自同一组已初始化依赖。
+因此顺序必须是“确定目标 cwd → 创建 services → 解析 session options → 创建 session”。`createAgentSessionFromServices()` 本身只是受约束的装配器，它将同一组已初始化依赖中的 cwd、settings、resources 和 model runtime 传给 `createAgentSession()`。
 
 ### 2.1 SDK 默认入口与 CLI 的差异
 
