@@ -1,0 +1,50 @@
+architecture-analysis/04-resources-and-extensions.md
+  s_ece32964e69c44::t_86902d888dee81 13-45
+  s_a998cf8b28fe31::t_597b826eae4f9d 74-102
+architecture-analysis/02-runtime-bootstrap.md
+  s_b3d73932e9e31c::t_40bb29c5b8b985 33
+  s_b3d73932e9e31c::t_33d5662f9a578a 32
+architecture-analysis/03-model-and-auth-runtime.md
+  s_a998cf8b28fe31::t_97bb9b25b016af 25,27,44,58,60
+packages/coding-agent/src/core/model-runtime.ts
+  s_b3d73932e9e31c::t_5e6fb8950995c9 290,304,323,325,340,342,354,368,377,383
+  s_b3d73932e9e31c::t_d82e5ac36b8cf4 246-248,756,768
+architecture-analysis/05-agent-session-and-execution.md
+  s_a998cf8b28fe31::t_597b826eae4f9d 281
+.pi/skills/technical-doc-writing/agents/openai.yaml
+  s_a998cf8b28fe31::t_6dda9b79e5911c 1-3
+.pi/skills/technical-doc-writing/SKILL.md
+  s_a998cf8b28fe31::t_6dda9b79e5911c 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.44-trip",
+  "base_commit_sha": "a84b837c2fb0ce16eb842cd1233382fdb7ac47fc",
+  "prompts": {},
+  "sessions": {
+    "s_a998cf8b28fe31": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0997a-60e0-7701-83f9-a554f7a97455",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_b3d73932e9e31c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0953f-a8fc-78a0-bc08-c48ebf0bfa9a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    },
+    "s_ece32964e69c44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09584-c4b0-79f3-9a24-5936d5667a01",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "tcy1999 <tcy9902@outlook.com>"
+    }
+  }
+}
