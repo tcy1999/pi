@@ -29,8 +29,8 @@ offline 等进程级选项在启动早期生效，影响后续初始化，不属
 按启动时对象出现的顺序阅读：
 
 1. [`cli.ts`](../packages/coding-agent/src/cli.ts)：确认极薄进程入口怎样调用 `main()`。
-2. [`main.ts`](../packages/coding-agent/src/main.ts)：跟踪 `appMode`、`sessionManager`、`settingsManager`、`modelRuntime`、`resourceLoader` 和 `runtime` 的创建与传递，重点看 `resourceLoader` 如何使用同一个 `settingsManager`，以及加载出的扩展如何影响后续模型和工具配置。
-3. [`agent-session-services.ts`](../packages/coding-agent/src/core/agent-session-services.ts)：确认这些依赖为何要先于 session 创建。
+2. [`main.ts`](../packages/coding-agent/src/main.ts)：跟踪 `appMode`、`sessionManager`、`settingsManager`、`modelRuntime`、`resourceLoader` 和 `runtime` 的创建与传递。`resourceLoader` 直接保存传入的 `settingsManager` 对象引用；未传入时才自行创建实例。资源加载完成后，再用扩展提供的模型和工具配置准备会话。
+3. [`agent-session-services.ts`](../packages/coding-agent/src/core/agent-session-services.ts)：`createAgentSessionServices()` 加载资源，将扩展提供的 provider 注册到 `modelRuntime`；`createAgentSessionFromServices()` 将准备好的依赖传给 `createAgentSession()`。
 4. [`agent-session-runtime.ts`](../packages/coding-agent/src/core/agent-session-runtime.ts)：它负责替换整组服务，具体切换顺序见[会话替换生命周期](./06-session-and-persistence.md#9-会话替换生命周期)。
 5. [`sdk.ts`](../packages/coding-agent/src/core/sdk.ts)：对照 CLI 与 SDK 怎样共享会话构造逻辑，以及依赖准备流程的差异。
 

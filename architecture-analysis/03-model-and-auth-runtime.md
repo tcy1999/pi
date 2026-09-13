@@ -22,9 +22,9 @@ provider（模型供应商适配）是描述一组模型、认证方式、模型
 
 这比在一个巨大 `switch(provider)` 中处理所有请求更易扩展，也支持 extensions 注册自定义供应商。
 
-### 2.1 ModelRuntime 创建时怎样装配这些对象
+### 2.1 ModelRuntime 创建时做了什么
 
-coding-agent 需要在列模型、登录和真正请求模型之间共享同一份配置与认证状态。例如，模型目录里有某个模型，但本机没有该 provider 的凭据，它就应该出现在全部模型中，而不能仅凭目录存在就列为当前可用。`ModelRuntime.create()` 为这些操作装配公共依赖，并建立初始快照。
+coding-agent 在列出模型、登录和调用模型时，需要使用同一份配置和认证状态。例如，模型目录中有某个模型，但本机没有该 provider 的凭据，所以它会出现在模型列表里，但暂时不能使用。`ModelRuntime.create()` 创建这些操作需要的对象，并读取初始的模型列表和认证状态。
 
 ```text
 ModelRuntime.create(options)
@@ -41,7 +41,7 @@ ModelRuntime.create(options)
 1. **准备凭据。** 使用调用方注入的 `CredentialStore`，否则创建默认 `AuthStorage`；外面统一包一层 `RuntimeCredentials`，让临时 API key 可以覆盖持久凭据。创建存储会读取本地认证状态，但不等于发起登录。
 2. **读取模型配置。** 默认读取 agent 目录的 `models.json`；`modelsPath: null` 表示不加载该文件。`ModelConfig.load()` 去掉 BOM 和 JSON 注释、校验 schema，再创建不可变的 provider 配置快照。文件不存在按空配置处理；格式或读取错误保存在配置对象中，可通过 runtime 的 `getError()` 查询。
 3. **准备目录存储。** 优先使用注入的 `ModelsStore`；否则默认使用与 `models.json` 同目录的 `models-store.json`，路径可覆盖。关闭模型配置文件且未注入 store 时，改用内存目录存储。这个存储保存模型元数据，不保存 API key。
-4. **构造 provider。** 调用 `builtinProviders()` 得到内建 provider；除 Radius 外，为它们包上 `withRemoteCatalog()`，增加恢复缓存和刷新远程目录的能力。此时只是装配能力，并未因此发送目录请求。
+4. **构造 provider。** 调用 `builtinProviders()` 得到内建 provider；除 Radius 外，通过 `withRemoteCatalog()` 为它们增加恢复缓存和刷新远程目录的功能。这一步不会发送网络请求。
 5. **创建集合并组合配置。** 构造函数调用 pi-ai 的 `createModels({ credentials, modelsStore })`，保存内建 provider，再通过 `rebuildProviders()` / `recomposeProvider()` 应用配置。随后 `configureRadiusProviders()` 根据 `oauth: "radius"` 与网关地址建立相应 provider，再重建集合。扩展 provider 的注册表此时为空；加载扩展、调用 `registerProvider()` 属于后续资源装配，不是 `create()` 自己发现并执行扩展。
 6. **初始化目录和认证快照。** 除非 `refreshOnCreate: false`，创建流程会等待 `runtime.refresh()`。它重新加载配置并组合 provider，交给 `Models.refresh()` 先恢复本地目录，再在允许时联网，最后更新 `all`、`available`、已配置 provider、已存储凭据 provider 和认证来源等快照。
 
@@ -55,9 +55,9 @@ ModelRuntime.create(options)
 | `refreshOnCreate: false` | 跳过初始刷新；同步模型列表仍有已组合的模型，但可用模型和认证快照尚未初始化 |
 | 提供 `modelRefreshTimeoutMs` 且启用创建时联网刷新 | 对初始刷新阶段设置取消 timer，并与调用方 signal 合并；不是整个构造过程的统一超时 |
 
-可用性检查主要判断认证是否配置完整，并应用 provider 的模型过滤；它不逐个发推理请求验证权限、余额或服务健康。创建过程也不选择本次对话的模型、不构建 AgentSession、不运行工具循环。真正请求时仍须重新解析认证，见本章第 6 节。
+检查模型是否可用时，主要看认证配置是否完整，以及模型是否符合 provider 的过滤条件。Pi 不会逐个调用模型来确认权限、余额或服务是否正常。`ModelRuntime.create()` 也不负责选择本次对话的模型或创建 AgentSession。实际调用模型时，还会重新读取和解析凭据，见本章第 6 节。
 
-初始化也允许部分失败：provider 组合失败时记录错误，有内建基础 provider 则保留它；模型刷新按 provider 收集错误。当前 `create()` 等待 `refresh()`，但没有把其返回的每项刷新错误统一转成创建异常。因此拿到 runtime 不能解释成所有目录都已刷新成功；配置、组合与可用性错误看 `getError()`，显式刷新时还应检查返回的 `errors` 和 `aborted`。
+部分初始化步骤失败时，仍可能返回 `ModelRuntime`。例如，应用 provider 配置失败时，会记录错误，并在有内建 provider 的情况下保留它；刷新模型目录失败时，会按 provider 收集错误。`create()` 会等待 `refresh()` 完成，但不会因为返回结果中有刷新错误就抛出异常。因此，创建成功并不代表所有模型目录都刷新成功。可以通过 `getError()` 查看配置、provider 组合和可用性检查中的错误；主动调用 `refresh()` 时，还应检查返回的 `errors` 和 `aborted`。
 
 实现入口：[model-runtime.ts](../packages/coding-agent/src/core/model-runtime.ts) 的 `create()`、构造函数、`recomposeProvider()`、`refresh()` 与 `runAvailabilityRefresh()`；配置读取见 [model-config.ts](../packages/coding-agent/src/core/model-config.ts)，目录存储见 [models-store.ts](../packages/coding-agent/src/core/models-store.ts)。
 
@@ -269,7 +269,3 @@ compaction 会把大量旧消息替换为一条新摘要，改变 prompt 前缀�
 2. 在 [anthropic-messages.ts](../packages/ai/src/api/anthropic-messages.ts) 中定位 cache marker，再与 [`openai-responses.ts`](../packages/ai/src/api/openai-responses.ts) 对照 key 与 retention 的不同映射；OpenCode 的跨 API session header 见 [`opencode-headers.ts`](../packages/ai/src/providers/opencode-headers.ts)。
 3. 读 [`cache-stats.ts`](../packages/coding-agent/src/core/cache-stats.ts)，确认产品怎样依据供应商 usage 估算命中率和额外费用。
 4. 在[压缩算法](./06-session-and-persistence.md#36-具体实现)的 `completeSummarization()` 中，可以看到一次性摘要请求为何禁用 prompt cache。
-
-## 10. 评价
-
-该层成功把供应商复杂度封装在边界内，同时保留非通用能力。主要维护成本是兼容矩阵和快速变化的模型元数据，因此仓库用生成脚本、目录校验和大量 provider regression tests 将其变成数据与测试问题，而不是散落在产品层的条件分支。

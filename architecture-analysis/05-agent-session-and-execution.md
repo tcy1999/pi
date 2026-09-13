@@ -278,7 +278,7 @@ system prompt 是每次模型请求最前面的行为说明。Pi 不把它视为
 
 - 只有当前启用且提供 prompt snippet 的工具才进入 `Available tools`。
 - `read`、`edit`、`bash` 等工具可以贡献自己的 guideline；同一 guideline 会去重。
-- skills 只有在 `read` 可用时加入，因为模型需要通过读文件取得 skill 的完整内容。
+- skills 清单只有在 `read` 或 `bash` 可用时加入，优先提示使用 `read`；清单包含名称、描述和路径，正文按需读取。完整流程见 [Skill 的渐进式加载](./04-resources-and-extensions.md#41-skill-的渐进式加载)。
 - 项目 `AGENTS.md` 等 context file 用带来源路径的标签加入，保留指令来自哪里。
 - extension 改变 active tools 或 reload 资源后，`AgentSession` 重建基础 system prompt；`before_agent_start` 还能只为本次 run 覆盖它。
 

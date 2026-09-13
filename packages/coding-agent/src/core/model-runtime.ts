@@ -243,8 +243,9 @@ export class ModelRuntime implements Models {
 	}
 
 	private recomposeProvider(providerId: string): void {
-		// base 是完整实现：优先取 registerNativeProvider() 注册的对象，否则使用内建 provider。
-		// extension 则是 registerProvider() 注册的配置层，两者都针对同一个 provider ID。
+		// native 是扩展直接提供的完整 Provider（模型目录、认证、请求方法），优先于同 ID 的内建实现。
+		// registerProvider() 提供的是配置层；两种注册方式对同一 ID 互斥，由最后一次成功注册决定。
+		// 这里的优先级只决定 base 用谁：选中 native 后，仍会应用 models.json 中的配置。
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
 		if (!base && !this.config.getProvider(providerId) && !extension) {
@@ -286,6 +287,7 @@ export class ModelRuntime implements Models {
 	}
 
 	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
+		// 全量检查拿到所有 provider 的结果后，直接替换整份快照，无需与旧的可用性结果合并。
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(undefined, { signal }),
@@ -299,6 +301,7 @@ export class ModelRuntime implements Models {
 			),
 			this.credentials.list({ signal }),
 		]);
+		// 检查期间若启动了新的全量或单个刷新，这一轮结果就已过时，不能覆盖较新的状态。
 		if (seq !== this.availabilityRefreshSeq) return;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
@@ -317,7 +320,9 @@ export class ModelRuntime implements Models {
 	}
 
 	private queueAvailabilityRefresh(signal?: AbortSignal): Promise<void> {
+		// 名称中的 queue 不代表串行排队：检查可以并发运行，版本号只允许最新一轮提交结果。
 		const seq = ++this.availabilityRefreshSeq;
+		// 全量刷新将重新检查所有 provider，因此也让此前启动的单个刷新失效。
 		for (const [providerId, providerSeq] of this.providerAvailabilitySeq) {
 			this.providerAvailabilitySeq.set(providerId, providerSeq + 1);
 		}
@@ -332,8 +337,9 @@ export class ModelRuntime implements Models {
 	}
 
 	private async refreshProviderAvailability(providerId: string, signal: AbortSignal): Promise<void> {
-		// Invalidate any full availability pass that started before this credential change.
+		// 单个刷新可能发生在登录、退出之后，先让旧的全量检查失效，避免它覆盖新的认证状态。
 		++this.availabilityRefreshSeq;
+		// 不同 provider 的刷新可以分别提交；同一个 provider 只接受最后启动的那一轮结果。
 		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
 		this.providerAvailabilitySeq.set(providerId, providerSeq);
 		const errorSeq = ++this.availabilityErrorSeq;
@@ -345,6 +351,7 @@ export class ModelRuntime implements Models {
 			]);
 			signal.throwIfAborted();
 			if (this.providerAvailabilitySeq.get(providerId) !== providerSeq) return;
+			// 只检查了一家，不能替换整份快照。等待结束后从最新快照复制，保留其他刷新已提交的结果。
 			const configuredProviders = new Set(this.snapshot.configuredProviders);
 			const storedProviders = new Set(this.snapshot.storedProviders);
 			const authByProvider = new Map(this.snapshot.auth);
@@ -358,6 +365,7 @@ export class ModelRuntime implements Models {
 			if (credential) storedProviders.add(providerId);
 			else storedProviders.delete(providerId);
 			const all = [...this.models.getModels()];
+			// 移除这家 provider 的旧可用模型，加入本次结果；其他 provider 的结果保持不变。
 			const availableById = new Map(
 				[...this.snapshot.available.filter((model) => model.provider !== providerId), ...available].map((model) => [
 					`${model.provider}\0${model.id}`,
@@ -366,11 +374,13 @@ export class ModelRuntime implements Models {
 			);
 			this.snapshot = {
 				all,
+				// 按当前目录排序，同时排除刷新期间已从目录中移除的模型。
 				available: all.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
 				configuredProviders,
 				storedProviders,
 				auth: authByProvider,
 			};
+			// 错误状态由所有刷新共享：旧操作成功时，也不能清掉较新一轮留下的错误。
 			if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
 		} catch (error) {
 			if (
@@ -743,6 +753,7 @@ export class ModelRuntime implements Models {
 
 	registerNativeProvider(provider: Provider): void {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		// 改用完整实现时，清除同 ID 的普通扩展配置，避免继续套用之前注册的模型列表或认证配置。
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -754,6 +765,7 @@ export class ModelRuntime implements Models {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+		// 改用配置层时，移除同 ID 的 native 实现；后续以内建 provider（若有）为 base 重新组合。
 		this.nativeExtensionProviders.delete(providerId);
 		// Re-registration merges defined values over the previous registration and
 		// preserves undefined ones, matching the legacy ModelRegistry contract.
